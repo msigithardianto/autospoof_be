@@ -1,10 +1,10 @@
-const Anthropic = require('@anthropic-ai/sdk');
-
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+// Penyedia AI apa pun yang kompatibel dengan OpenAI Chat Completions (Groq, Gemini, OpenRouter, dll).
+// Default: Groq (ada free tier). Ganti lewat AI_BASE_URL / AI_MODEL di .env.
+const BASE_URL = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+const MODEL = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
 const MAX_HISTORY = 10; // jumlah pesan terakhir per channel yang diingat
 const COOLDOWN_MS = 5000; // jeda per user supaya biaya API terkontrol
 
-let client;
 const histories = new Map(); // channelId -> [{role, content}]
 const lastUse = new Map(); // userId -> timestamp
 
@@ -33,21 +33,26 @@ function checkCooldown(userId) {
 }
 
 async function ask(channelId, userName, text) {
-  if (!process.env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY belum diisi, fitur AI belum aktif.';
-  client ??= new Anthropic(); // membaca ANTHROPIC_API_KEY dari env
+  if (!process.env.AI_API_KEY) return 'AI_API_KEY belum diisi, fitur AI belum aktif.';
 
   const history = histories.get(channelId) ?? [];
   history.push({ role: 'user', content: `${userName}: ${text}` });
   while (history.length > MAX_HISTORY) history.shift();
   while (history.length && history[0].role !== 'user') history.shift();
 
-  const res = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    system: systemPrompt(),
-    messages: history,
+  const res = await fetch(`${BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'system', content: systemPrompt() }, ...history],
+    }),
+    signal: AbortSignal.timeout(30000),
   });
-  const answer = res.content.filter(b => b.type === 'text').map(b => b.text).join('').trim() || '(tidak ada jawaban)';
+  if (!res.ok) throw new Error(`AI API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const answer = data.choices?.[0]?.message?.content?.trim() || '(tidak ada jawaban)';
 
   history.push({ role: 'assistant', content: answer });
   histories.set(channelId, history);
