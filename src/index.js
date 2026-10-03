@@ -3,7 +3,7 @@ console.log('[bot] Memulai... env:', ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI
 const fs = require('fs');
 const path = require('path');
 const { qrisPng } = require('./qris');
-const { ask, format, checkCooldown } = require('./ai');
+const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -97,7 +97,7 @@ client.on(Events.MessageCreate, async message => {
   if (wait) return message.reply(`Tunggu ${wait} detik dulu ya.`);
   try {
     await message.channel.sendTyping();
-    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question + quoted + files, { knowledge: debug || isScript, script: isScript });
+    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question + quoted + files, { knowledge: debug || isScript, script: isScript, ui: isScript && wantsUi(question) });
     const { first, rest, files: codeFiles } = format(answer);
     await message.reply({ content: first, files: codeFiles, allowedMentions: { parse: [], repliedUser: false } });
     for (const part of rest) await message.channel.send({ content: part, allowedMentions: { parse: [] } });
