@@ -26,5 +26,6 @@ module.exports = {
     }
     const note = total < interaction.options.getInteger('jumlah') ? '\n(Pesan lebih lama dari 14 hari tidak bisa dihapus massal oleh Discord.)' : '';
     await interaction.editReply(`🧹 ${total} pesan dihapus.${note}`);
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 5000); // bersihkan balasan ephemeral sendiri
   },
 };
