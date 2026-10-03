@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { qrisPng } = require('./qris');
+const { ask, chunk, checkCooldown } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -64,7 +65,26 @@ client.on(Events.MessageCreate, async message => {
     return message.reply(payload);
   }
   const hit = faq.find(f => has(f.triggers));
-  if (hit) message.reply(hit.text);
+  if (hit) return message.reply(hit.text);
+
+  // AI: dijawab jika bot di-mention, di-reply, atau di channel khusus AI (AI_CHANNEL_ID)
+  const mentioned = message.mentions.has(client.user, { ignoreEveryone: true, ignoreRoles: true });
+  const inAiChannel = process.env.AI_CHANNEL_ID && message.channelId === process.env.AI_CHANNEL_ID;
+  if (!mentioned && !inAiChannel) return;
+  const question = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+  if (!question) return message.reply('Ya? Mau tanya apa? 😄');
+  const wait = checkCooldown(message.author.id);
+  if (wait) return message.reply(`Tunggu ${wait} detik dulu ya.`);
+  try {
+    await message.channel.sendTyping();
+    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question);
+    const [first, ...rest] = chunk(answer);
+    await message.reply({ content: first, allowedMentions: { parse: [], repliedUser: false } });
+    for (const part of rest) await message.channel.send({ content: part, allowedMentions: { parse: [] } });
+  } catch (err) {
+    console.error(err);
+    message.reply('Maaf, AI lagi error. Coba lagi nanti.');
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
