@@ -24,11 +24,14 @@ for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
 client.once(Events.ClientReady, c => console.log(`Online sebagai ${c.user.tag}`));
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  const cmd = client.commands.get(interaction.commandName);
+  const isModal = interaction.isModalSubmit();
+  if (!interaction.isChatInputCommand() && !isModal) return;
+  const cmd = isModal
+    ? client.commands.find(c => c.modalId === interaction.customId)
+    : client.commands.get(interaction.commandName);
   if (!cmd) return;
   try {
-    await cmd.execute(interaction);
+    await (isModal ? cmd.handleModal(interaction) : cmd.execute(interaction));
   } catch (err) {
     console.error(err);
     const msg = { content: 'Terjadi error saat menjalankan command.', flags: MessageFlags.Ephemeral };
@@ -73,12 +76,18 @@ client.on(Events.MessageCreate, async message => {
   const inAiChannel = process.env.AI_CHANNEL_ID && message.channelId === process.env.AI_CHANNEL_ID;
   if (!mentioned && !inAiChannel) return;
   const question = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
-  if (!question) return message.reply('Ya? Mau tanya apa? 😄');
+  // Jika user me-reply sebuah pesan (mis. error dari orang lain), sertakan isinya sebagai konteks
+  let quoted = '';
+  if (message.reference?.messageId) {
+    const ref = await message.fetchReference().catch(() => null);
+    if (ref?.content) quoted = `\n\n[Pesan yang di-reply, dari ${ref.member?.displayName ?? ref.author.username}]:\n${ref.content.slice(0, 3000)}`;
+  }
+  if (!question && !quoted) return message.reply('Ya? Mau tanya apa? 😄');
   const wait = checkCooldown(message.author.id);
   if (wait) return message.reply(`Tunggu ${wait} detik dulu ya.`);
   try {
     await message.channel.sendTyping();
-    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question);
+    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question + quoted);
     const [first, ...rest] = chunk(answer);
     await message.reply({ content: first, allowedMentions: { parse: [], repliedUser: false } });
     for (const part of rest) await message.channel.send({ content: part, allowedMentions: { parse: [] } });
