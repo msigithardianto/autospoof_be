@@ -1,4 +1,5 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
+console.log('[bot] Memulai... env:', ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI_API_KEY','QRIS_STRING'].map(k => `${k}=${process.env[k] ? 'ada' : 'KOSONG'}`).join(' '));
 const fs = require('fs');
 const path = require('path');
 const { qrisPng } = require('./qris');
