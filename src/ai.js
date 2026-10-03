@@ -1,12 +1,42 @@
 // Penyedia AI apa pun yang kompatibel dengan OpenAI Chat Completions (Groq, Gemini, OpenRouter, dll).
 // Default: Groq (ada free tier). Ganti lewat AI_BASE_URL / AI_MODEL di .env.
 const BASE_URL = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
-const MODEL = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
+const FALLBACK_MODEL = 'llama-3.3-70b-versatile';
+// Urutan preferensi kalau AI_MODEL tidak diisi: bot memilih dari daftar model yang tersedia di akunmu
+const PREFER = ['llama-3.3-70b', 'gpt-oss-120b', 'llama-4', 'qwen', 'kimi', 'llama-3.1-8b', 'gpt-oss-20b', 'gemini-2.0-flash', 'gemini'];
+const NOT_CHAT = /whisper|tts|guard|embed|orpheus|playai|distil|vision-preview|moderation|image/i;
+let resolved;
 const MAX_HISTORY = 10; // jumlah pesan terakhir per channel yang diingat
 const COOLDOWN_MS = 5000; // jeda per user supaya biaya API terkontrol
 
 const histories = new Map(); // channelId -> [{role, content}]
 const lastUse = new Map(); // userId -> timestamp
+
+async function listModels() {
+  const res = await fetch(`${BASE_URL}/models`, {
+    headers: { Authorization: `Bearer ${process.env.AI_API_KEY}` },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`AI API ${res.status} saat mengambil daftar model: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return (data.data ?? []).map(m => m.id).filter(id => id && !NOT_CHAT.test(id));
+}
+
+async function resolveModel() {
+  if (process.env.AI_MODEL) return process.env.AI_MODEL;
+  if (resolved) return resolved;
+  try {
+    const ids = await listModels();
+    for (const p of PREFER) {
+      const hit = ids.find(id => id.toLowerCase().includes(p));
+      if (hit) return (resolved = hit);
+    }
+    if (ids.length) return (resolved = ids[0]);
+  } catch (err) {
+    console.error('[ai] gagal mengambil daftar model:', err.message);
+  }
+  return FALLBACK_MODEL;
+}
 
 function systemPrompt() {
   const maps = require('./data/maps.json');
@@ -44,7 +74,7 @@ async function ask(channelId, userName, text) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
     body: JSON.stringify({
-      model: MODEL,
+      model: await resolveModel(),
       max_tokens: 1024,
       messages: [{ role: 'system', content: systemPrompt() }, ...history],
     }),
@@ -71,4 +101,4 @@ function chunk(text, size = 1900) {
   return parts;
 }
 
-module.exports = { ask, chunk, checkCooldown };
+module.exports = { ask, chunk, checkCooldown, listModels, resolveModel };
