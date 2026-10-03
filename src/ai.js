@@ -44,6 +44,8 @@ function systemPrompt() {
   const fmt = items => items.map(i => `- ${i.nama} (${i.harga}): ${i.deskripsi}`).join('\n');
   return `Kamu adalah "arr", asisten bot Discord yang ramah, santai, dan membantu. Jawab dalam bahasa yang sama dengan pengguna (default Bahasa Indonesia). Jawaban ringkas dan jelas; maksimal sekitar 1500 karakter kecuali diminta detail. Boleh pakai format markdown Discord.
 
+Server ini milik developer Roblox (studio "arr"). Kamu paham Roblox Studio, Luau, DataStore, RemoteEvent/RemoteFunction, TeleportService, MessagingService, UI (ScreenGui), map/terrain, dan monetisasi (game pass, developer product). Saat membantu soal Roblox, beri jawaban praktis dan contoh kode Luau singkat bila perlu; jangan mengarang API yang tidak ada — kalau ragu, bilang ragu.
+
 Kamu juga membantu penjualan di server ini. Berikut data yang tersedia:
 MAP READY:
 ${fmt(maps)}
@@ -62,10 +64,10 @@ function checkCooldown(userId) {
   return 0;
 }
 
-async function ask(channelId, userName, text) {
+async function ask(channelId, userName, text, opts = {}) {
   if (!process.env.AI_API_KEY) return 'AI_API_KEY belum diisi, fitur AI belum aktif.';
 
-  const history = histories.get(channelId) ?? [];
+  const history = opts.noHistory ? [] : histories.get(channelId) ?? [];
   history.push({ role: 'user', content: `${userName}: ${text}` });
   while (history.length > MAX_HISTORY) history.shift();
   while (history.length && history[0].role !== 'user') history.shift();
@@ -76,7 +78,7 @@ async function ask(channelId, userName, text) {
     body: JSON.stringify({
       model: await resolveModel(),
       max_tokens: 1024,
-      messages: [{ role: 'system', content: systemPrompt() }, ...history],
+      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') }, ...history],
     }),
     signal: AbortSignal.timeout(30000),
   });
@@ -84,8 +86,10 @@ async function ask(channelId, userName, text) {
   const data = await res.json();
   const answer = data.choices?.[0]?.message?.content?.trim() || '(tidak ada jawaban)';
 
-  history.push({ role: 'assistant', content: answer });
-  histories.set(channelId, history);
+  if (!opts.noHistory) {
+    history.push({ role: 'assistant', content: answer });
+    histories.set(channelId, history);
+  }
   return answer;
 }
 
