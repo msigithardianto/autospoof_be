@@ -98,6 +98,7 @@ if (!process.env.DISCORD_TOKEN) {
 }
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error(`LOGIN GAGAL [${err.code ?? 'ERR'}]: ${err.message}`);
-  if (hints[err.code]) console.error(`SOLUSI: ${hints[err.code]}`);
+  const key = /disallowed intents/i.test(err.message) ? 'DisallowedIntents' : /invalid token/i.test(err.message) ? 'TokenInvalid' : err.code;
+  if (hints[key]) console.error(`SOLUSI: ${hints[key]}`);
   process.exit(1);
 });
