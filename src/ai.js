@@ -40,6 +40,12 @@ async function resolveModel() {
   return FALLBACK_MODEL;
 }
 
+let codeStandard;
+function loadCodeStandard() {
+  codeStandard ??= fs.readFileSync(path.join(__dirname, 'data', 'roblox-code-standard.md'), 'utf8');
+  return codeStandard;
+}
+
 let uiGuide;
 function loadUiGuide() {
   uiGuide ??= fs.readFileSync(path.join(__dirname, 'data', 'roblox-ui-guide.md'), 'utf8');
@@ -97,7 +103,7 @@ async function ask(channelId, userName, text, opts = {}) {
       model: await resolveModel(),
       max_tokens: opts.knowledge ? 4096 : 2048,
       temperature: opts.knowledge ? 0.3 : 0.7,
-      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') + (opts.script ? `\n\n${SCRIPT_RULES}${opts.ui ? `\n\n${loadUiGuide()}` : ''}` : opts.knowledge ? `\n\n${DEBUG_RULES}\n\nREFERENSI:\n${loadKnowledge()}` : '') }, ...history],
+      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') + (opts.script ? `\n\n${SCRIPT_RULES}\n\n${loadCodeStandard()}${opts.ui ? `\n\n${loadUiGuide()}` : ''}` : opts.knowledge ? `\n\n${DEBUG_RULES}\n\nREFERENSI:\n${loadKnowledge()}` : '') }, ...history],
     }),
     signal: AbortSignal.timeout(30000),
   });
