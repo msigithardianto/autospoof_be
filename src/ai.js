@@ -132,19 +132,40 @@ function chunk(text, size = 1900) {
   return parts;
 }
 
-// Kumpulkan isi semua code block jadi satu file (untuk disalin mudah)
-function codeFile(answer, minChars = 1500) {
-  const blocks = [...answer.matchAll(/```[\w]*\n([\s\S]*?)```/g)].map(m => m[1].trim());
-  const code = blocks.join('\n\n-- ----------------------------------------\n\n');
-  if (code.length < minChars) return null;
-  return { attachment: Buffer.from(code, 'utf8'), name: 'script.lua' };
+// Jawaban panjang: blok kode besar dikirim sebagai file .lua terpisah (bukan dipecah di tengah kode),
+// pesan hanya berisi penjelasan + penanda file.
+const BIG_CODE = 600; // blok kode lebih panjang dari ini dijadikan file
+
+function slugName(line, used) {
+  let base = (line ?? '').replace(/[*#_`>\[\]()]/g, ' ').split(/[–—:(]| - /)[0].trim().replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  base ||= 'script';
+  let name = base, n = 2;
+  while (used.has(name)) name = `${base}_${n++}`;
+  used.add(name);
+  return `${name}.lua`;
 }
 
-// Bentuk pesan Discord: potongan teks + (opsional) file kode
 function format(answer) {
-  const [first, ...rest] = chunk(answer);
-  const file = codeFile(answer);
-  return { first, rest, files: file ? [file] : [] };
+  if (answer.length <= 1900) return { first: answer, rest: [], files: [] };
+
+  const files = [];
+  const used = new Set();
+  let text = '';
+  let last = 0;
+  for (const m of answer.matchAll(/```[\w]*\n([\s\S]*?)```/g)) {
+    const code = m[1].trim();
+    if (code.length < BIG_CODE || files.length >= 10) continue; // blok kecil tetap inline
+    const before = answer.slice(last, m.index);
+    const prevLine = before.split('\n').map(l => l.trim()).filter(Boolean).pop();
+    const name = slugName(prevLine, used);
+    files.push({ attachment: Buffer.from(code, 'utf8'), name });
+    text += before + `📎 **${name}** (${code.split('\n').length} baris, lihat file lampiran)`;
+    last = m.index + m[0].length;
+  }
+  text += answer.slice(last);
+
+  const [first, ...rest] = chunk(text.trim());
+  return { first, rest, files };
 }
 
-module.exports = { ask, chunk, format, codeFile, checkCooldown, listModels, resolveModel };
+module.exports = { ask, chunk, format, checkCooldown, listModels, resolveModel };
