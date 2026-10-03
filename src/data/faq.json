@@ -1,0 +1,12 @@
+{
+  "qris": {
+    "triggers": ["qris"],
+    "text": "Ini QRIS untuk pembayaran. Setelah bayar, kirim bukti transfer ke admin ya.",
+    "image": "assets/qris.png"
+  },
+  "faq": [
+    { "triggers": ["cara beli", "cara order", "order gimana"], "text": "Cara order: pilih item dengan /mapready atau /sistemready, lalu hubungi admin dan bayar via QRIS." },
+    { "triggers": ["harga", "price list", "pricelist"], "text": "Cek daftar harga lewat /mapready (map) dan /sistemready (sistem)." },
+    { "triggers": ["garansi"], "text": "Isi jawaban garansi di src/data/faq.json." }
+  ]
+}

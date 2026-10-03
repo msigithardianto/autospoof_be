@@ -1,0 +1,4 @@
+[
+  { "nama": "Contoh Map 1", "harga": "Rp50.000", "deskripsi": "Ganti dengan map yang kamu jual" },
+  { "nama": "Contoh Map 2", "harga": "Rp75.000", "deskripsi": "Edit file src/data/maps.json" }
+]

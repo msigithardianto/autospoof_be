@@ -1,0 +1,4 @@
+[
+  { "nama": "Contoh Sistem 1", "harga": "Rp100.000", "deskripsi": "Ganti dengan sistem yang kamu punya" },
+  { "nama": "Contoh Sistem 2", "harga": "Rp150.000", "deskripsi": "Edit file src/data/systems.json" }
+]
