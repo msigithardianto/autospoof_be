@@ -3,6 +3,7 @@ console.log('[bot] Memulai... env:', ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI
 const fs = require('fs');
 const path = require('path');
 const { qrisPng } = require('./qris');
+const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
@@ -14,6 +15,8 @@ const client = new Client({
   ],
 });
 
+setupGuard(client);
+
 client.commands = new Collection();
 const commandsDir = path.join(__dirname, 'commands');
 for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
@@ -24,6 +27,7 @@ for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
 client.once(Events.ClientReady, c => console.log(`Online sebagai ${c.user.tag}`));
 
 client.on(Events.InteractionCreate, async interaction => {
+  if (interaction.guildId && !isAllowed(interaction.guildId)) return; // server tidak diizinkan
   const isModal = interaction.isModalSubmit();
   if (!interaction.isChatInputCommand() && !isModal) return;
   const cmd = isModal
@@ -43,6 +47,7 @@ client.on(Events.InteractionCreate, async interaction => {
 // Auto-reply: kata kunci "qris" dan FAQ (src/data/faq.json)
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot || !message.guild) return;
+  if (!isAllowed(message.guildId)) return;
   delete require.cache[require.resolve('./data/faq.json')];
   const { qris, faq } = require('./data/faq.json');
   const text = message.content.toLowerCase();
