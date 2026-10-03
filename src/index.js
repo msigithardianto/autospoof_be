@@ -87,4 +87,16 @@ client.on(Events.MessageCreate, async message => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+const hints = {
+  TokenInvalid: 'DISCORD_TOKEN salah/kosong/sudah direset. Isi token terbaru di Variables.',
+  DisallowedIntents: 'Aktifkan "Message Content Intent" di Developer Portal -> Bot, lalu Save Changes.',
+};
+if (!process.env.DISCORD_TOKEN) {
+  console.error('LOGIN GAGAL: DISCORD_TOKEN belum diisi di Variables.');
+  process.exit(1);
+}
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+  console.error(`LOGIN GAGAL [${err.code ?? 'ERR'}]: ${err.message}`);
+  if (hints[err.code]) console.error(`SOLUSI: ${hints[err.code]}`);
+  process.exit(1);
+});
