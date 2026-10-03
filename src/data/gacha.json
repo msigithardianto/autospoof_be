@@ -1,0 +1,18 @@
+{
+  "cooldownHours": 24,
+  "rarities": {
+    "common":    { "label": "Common",    "weight": 60, "emoji": "⚪", "color": "0x95a5a6" },
+    "rare":      { "label": "Rare",      "weight": 28, "emoji": "🔵", "color": "0x3498db" },
+    "epic":      { "label": "Epic",      "weight": 10, "emoji": "🟣", "color": "0x9b59b6" },
+    "legendary": { "label": "Legendary", "weight": 2,  "emoji": "🟡", "color": "0xf1c40f" }
+  },
+  "assets": [
+    { "nama": "Contoh Asset Common 1", "rarity": "common", "deskripsi": "Ganti dengan free asset kamu", "link": "" },
+    { "nama": "Contoh Asset Common 2", "rarity": "common", "deskripsi": "Edit file src/data/gacha.json", "link": "" },
+    { "nama": "Contoh Asset Common 3", "rarity": "common", "deskripsi": "Isi link download jika ada", "link": "" },
+    { "nama": "Contoh Asset Rare 1", "rarity": "rare", "deskripsi": "Asset yang lebih jarang keluar", "link": "" },
+    { "nama": "Contoh Asset Rare 2", "rarity": "rare", "deskripsi": "Atur peluang di bagian rarities", "link": "" },
+    { "nama": "Contoh Asset Epic 1", "rarity": "epic", "deskripsi": "Asset spesial", "link": "" },
+    { "nama": "Contoh Asset Legendary 1", "rarity": "legendary", "deskripsi": "Hadiah paling langka", "link": "" }
+  ]
+}
