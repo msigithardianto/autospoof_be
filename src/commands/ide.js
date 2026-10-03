@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { ask, chunk, checkCooldown } = require('../ai');
+const { ask, format, checkCooldown } = require('../ai');
 
 const KATEGORI = {
   free_asset: 'free asset kecil yang bisa dibagikan gratis (mis. UI kit, script utilitas, preset, efek, model, suara)',
@@ -38,7 +38,7 @@ module.exports = {
       noHistory: true,
       extra: 'Tugasmu sekarang: brainstorming ide produk Roblox. Abaikan topik lain.',
     });
-    const [first, ...rest] = chunk(answer);
+    const { first, rest } = format(answer);
     await interaction.editReply(first);
     for (const part of rest) await interaction.followUp(part);
   },

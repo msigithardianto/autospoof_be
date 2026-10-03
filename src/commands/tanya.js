@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { ask, chunk, checkCooldown } = require('../ai');
+const { ask, format, checkCooldown } = require('../ai');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -10,8 +10,8 @@ module.exports = {
     if (wait) return interaction.reply({ content: `Tunggu ${wait} detik dulu ya.`, flags: MessageFlags.Ephemeral });
     await interaction.deferReply();
     const answer = await ask(interaction.channelId, interaction.user.displayName, interaction.options.getString('pertanyaan'));
-    const [first, ...rest] = chunk(answer);
-    await interaction.editReply(first);
+    const { first, rest, files } = format(answer);
+    await interaction.editReply({ content: first, files });
     for (const part of rest) await interaction.followUp(part);
   },
 };

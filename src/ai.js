@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 // Penyedia AI apa pun yang kompatibel dengan OpenAI Chat Completions (Groq, Gemini, OpenRouter, dll).
 // Default: Groq (ada free tier). Ganti lewat AI_BASE_URL / AI_MODEL di .env.
 const BASE_URL = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
@@ -38,6 +40,16 @@ async function resolveModel() {
   return FALLBACK_MODEL;
 }
 
+let knowledge;
+function loadKnowledge() {
+  knowledge ??= fs.readFileSync(path.join(__dirname, 'data', 'roblox-knowledge.md'), 'utf8');
+  return knowledge;
+}
+
+const DEBUG_RULES = `MODE DEBUGGING. Cara kerja: (1) baca error & kode dengan teliti, tunjuk baris/variabel penyebab, bukan tebakan umum; (2) cocokkan dengan referensi di bawah; (3) jelaskan PENYEBAB akar masalah, lalu langkah SOLUSI, lalu KODE PERBAIKAN lengkap dalam code block lua; (4) cek apakah ada bug lain di kode yang sama (race condition, tidak ada pcall, memory leak, validasi client); (5) kalau informasi kurang, sebutkan 2-3 kemungkinan terkuat dan minta info spesifik (mis. isi Output lengkap, di mana script diletakkan, Script atau LocalScript). Jangan mengarang fungsi/properti Roblox yang tidak ada, dan jangan mengaku pasti kalau tidak yakin.`;
+
+const SCRIPT_RULES = `MODE PEMBUAT SCRIPT. Tulis script Luau LENGKAP dan siap pakai (bukan potongan). Format jawaban: (1) satu-dua kalimat ringkasan + asumsi yang kamu ambil kalau permintaan ambigu (sebut interpretasimu dan tawarkan variasi); (2) jenis script & LETAKNYA (mis. Script di ServerScriptService, LocalScript di StarterPlayerScripts, ModuleScript di ReplicatedStorage) beserta objek lain yang harus dibuat (RemoteEvent, folder, dll); (3) kode lengkap dalam SATU code block lua dengan bagian CONFIG di atas yang mudah diubah; (4) cara tes singkat. Aturan kode: gunakan API modern (task.wait, :Connect, tidak ada fungsi deprecated), validasi semua input client di server, bungkus DataStore/HTTP dengan pcall, putuskan koneksi/Destroy agar tidak memory leak, hindari loop berat tanpa yield, beri komentar singkat berbahasa Indonesia. Jangan mengarang API yang tidak ada. Kalau fitur butuh banyak script, berikan semuanya lengkap dan urut.`;
+
 function systemPrompt() {
   const maps = require('./data/maps.json');
   const systems = require('./data/systems.json');
@@ -77,14 +89,16 @@ async function ask(channelId, userName, text, opts = {}) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
     body: JSON.stringify({
       model: await resolveModel(),
-      max_tokens: 1024,
-      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') }, ...history],
+      max_tokens: opts.knowledge ? 4096 : 2048,
+      temperature: opts.knowledge ? 0.3 : 0.7,
+      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') + (opts.knowledge ? `\n\n${opts.script ? SCRIPT_RULES : DEBUG_RULES}\n\nREFERENSI:\n${loadKnowledge()}` : '') }, ...history],
     }),
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) throw new Error(`AI API ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
-  const answer = data.choices?.[0]?.message?.content?.trim() || '(tidak ada jawaban)';
+  let answer = data.choices?.[0]?.message?.content?.trim() || '(tidak ada jawaban)';
+  if (data.choices?.[0]?.finish_reason === 'length') answer += '\n\n_(Jawaban terpotong karena batas panjang AI. Tulis "lanjut" untuk melanjutkan.)_';
 
   if (!opts.noHistory) {
     history.push({ role: 'assistant', content: answer });
@@ -93,16 +107,44 @@ async function ask(channelId, userName, text, opts = {}) {
   return answer;
 }
 
-// Discord membatasi 2000 karakter per pesan
+// Discord membatasi 2000 karakter per pesan. Pecah jawaban panjang tanpa merusak code block (```).
 function chunk(text, size = 1900) {
   const parts = [];
-  for (let rest = text; rest.length; ) {
-    let cut = rest.length <= size ? rest.length : rest.lastIndexOf('\n', size);
-    if (cut <= 0) cut = Math.min(size, rest.length);
-    parts.push(rest.slice(0, cut));
-    rest = rest.slice(cut).trimStart();
+  let rest = text;
+  let reopen = '';
+  while (rest.length) {
+    let body = reopen + rest;
+    if (body.length <= size) { parts.push(body); break; }
+    let cut = body.lastIndexOf('\n', size - 8);
+    if (cut <= reopen.length) cut = size - 8;
+    let piece = body.slice(0, cut);
+    const fences = piece.match(/```/g)?.length ?? 0;
+    if (fences % 2 === 1) {
+      const lang = (piece.match(/```(\w*)[^`]*$/) ?? [, ''])[1];
+      piece += '\n```';
+      reopen = '```' + lang + '\n';
+    } else {
+      reopen = '';
+    }
+    parts.push(piece);
+    rest = body.slice(cut).replace(/^\n/, '');
   }
   return parts;
 }
 
-module.exports = { ask, chunk, checkCooldown, listModels, resolveModel };
+// Kumpulkan isi semua code block jadi satu file (untuk disalin mudah)
+function codeFile(answer, minChars = 1500) {
+  const blocks = [...answer.matchAll(/```[\w]*\n([\s\S]*?)```/g)].map(m => m[1].trim());
+  const code = blocks.join('\n\n-- ----------------------------------------\n\n');
+  if (code.length < minChars) return null;
+  return { attachment: Buffer.from(code, 'utf8'), name: 'script.lua' };
+}
+
+// Bentuk pesan Discord: potongan teks + (opsional) file kode
+function format(answer) {
+  const [first, ...rest] = chunk(answer);
+  const file = codeFile(answer);
+  return { first, rest, files: file ? [file] : [] };
+}
+
+module.exports = { ask, chunk, format, codeFile, checkCooldown, listModels, resolveModel };

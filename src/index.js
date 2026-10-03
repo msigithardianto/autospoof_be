@@ -3,7 +3,7 @@ console.log('[bot] Memulai... env:', ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI
 const fs = require('fs');
 const path = require('path');
 const { qrisPng } = require('./qris');
-const { ask, chunk, checkCooldown } = require('./ai');
+const { ask, format, checkCooldown } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -82,14 +82,24 @@ client.on(Events.MessageCreate, async message => {
     const ref = await message.fetchReference().catch(() => null);
     if (ref?.content) quoted = `\n\n[Pesan yang di-reply, dari ${ref.member?.displayName ?? ref.author.username}]:\n${ref.content.slice(0, 3000)}`;
   }
-  if (!question && !quoted) return message.reply('Ya? Mau tanya apa? 😄');
+  // Lampiran teks/kode (.lua, .txt, .log, ...) ikut dibaca
+  let files = '';
+  for (const att of [...message.attachments.values()].slice(0, 3)) {
+    if (!/\.(lua|luau|txt|log|json|md)$/i.test(att.name ?? '') || att.size > 100000) continue;
+    const r = await fetch(att.url, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (r?.ok) files += `\n\n[Lampiran ${att.name}]:\n${(await r.text()).slice(0, 6000)}`;
+  }
+  if (!question && !quoted && !files) return message.reply('Ya? Mau tanya apa? 😄');
+  // Mode debugging otomatis kalau terlihat seperti error/kode
+  const isScript = /\b(buat(kan|in)?|bikin(in|kan)?|generate|tulis(kan)?)\b[^.\n]{0,40}\b(script|sistem|system|module|ui|gui)\b/i.test(question);
+  const debug = /error|bug|attempt to|nil|not a valid member|infinite yield|exception|stack|gagal|kenapa|lua|script|```/i.test(question + quoted + files);
   const wait = checkCooldown(message.author.id);
   if (wait) return message.reply(`Tunggu ${wait} detik dulu ya.`);
   try {
     await message.channel.sendTyping();
-    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question + quoted);
-    const [first, ...rest] = chunk(answer);
-    await message.reply({ content: first, allowedMentions: { parse: [], repliedUser: false } });
+    const answer = await ask(message.channelId, message.member?.displayName ?? message.author.username, question + quoted + files, { knowledge: debug || isScript, script: isScript });
+    const { first, rest, files: codeFiles } = format(answer);
+    await message.reply({ content: first, files: codeFiles, allowedMentions: { parse: [], repliedUser: false } });
     for (const part of rest) await message.channel.send({ content: part, allowedMentions: { parse: [] } });
   } catch (err) {
     console.error('[ai] ERROR:', err.message);

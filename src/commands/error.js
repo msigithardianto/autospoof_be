@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
-const { ask, chunk, checkCooldown } = require('../ai');
+const { ask, format, checkCooldown } = require('../ai');
 
 const ID = 'error-modal';
 
@@ -38,12 +38,13 @@ module.exports = {
 
     const answer = await ask(interaction.channelId, interaction.user.displayName, prompt, {
       noHistory: true,
+      knowledge: true,
       extra: 'Tugasmu sekarang: debugging. Format jawaban: (1) **Penyebab** singkat, (2) **Solusi** langkah demi langkah, (3) **Kode perbaikan** (Luau, jika relevan) dalam code block. ' +
         'Pahami error Roblox umum (attempt to index nil, X is not a valid member of Y, Infinite yield possible, DataStore request rejected/throttled, RemoteEvent salah sisi client/server). ' +
         'Kalau informasi kurang untuk memastikan penyebab, sebutkan kemungkinan paling umum dan minta info tambahan yang spesifik. Jangan mengarang API yang tidak ada.',
     });
-    const [first, ...rest] = chunk(answer);
-    await interaction.editReply(first);
+    const { first, rest, files } = format(answer);
+    await interaction.editReply({ content: first, files });
     for (const part of rest) await interaction.followUp(part);
   },
 };
