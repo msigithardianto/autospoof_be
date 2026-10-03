@@ -1,6 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const { qrisPng } = require('./qris');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -43,6 +44,19 @@ client.on(Events.MessageCreate, async message => {
   const has = triggers => triggers.some(t => text.includes(t));
 
   if (has(qris.triggers)) {
+    // "qris 50000" / "qris 50k" -> QRIS dinamis dengan nominal (butuh QRIS_STRING di .env)
+    const m = text.match(/(\d[\d.]*)\s*(k|rb|ribu)?\b/);
+    if (m && process.env.QRIS_STRING) {
+      let amount = parseInt(m[1].replace(/\./g, ''), 10);
+      if (m[2]) amount *= 1000;
+      if (amount >= 1000 && amount <= 100000000) {
+        const png = await qrisPng(process.env.QRIS_STRING, amount);
+        return message.reply({
+          content: `Total bayar: **Rp${amount.toLocaleString('id-ID')}**. Scan lalu kirim bukti transfer ke admin.`,
+          files: [new AttachmentBuilder(png, { name: 'qris.png' })],
+        });
+      }
+    }
     const imgPath = path.join(__dirname, '..', qris.image);
     const payload = { content: qris.text };
     if (fs.existsSync(imgPath)) payload.files = [new AttachmentBuilder(imgPath)];
