@@ -83,7 +83,7 @@ client.on(Events.MessageCreate, async message => {
     await message.reply({ content: first, allowedMentions: { parse: [], repliedUser: false } });
     for (const part of rest) await message.channel.send({ content: part, allowedMentions: { parse: [] } });
   } catch (err) {
-    console.error(err);
+    console.error('[ai] ERROR:', err.message);
     message.reply('Maaf, AI lagi error. Coba lagi nanti.');
   }
 });
