@@ -60,7 +60,7 @@ function loadKnowledge() {
 
 const DEBUG_RULES = `MODE DEBUGGING. Cara kerja: (1) baca error & kode dengan teliti, tunjuk baris/variabel penyebab, bukan tebakan umum; (2) cocokkan dengan referensi di bawah; (3) jelaskan PENYEBAB akar masalah, lalu langkah SOLUSI, lalu KODE PERBAIKAN lengkap dalam code block lua; (4) cek apakah ada bug lain di kode yang sama (race condition, tidak ada pcall, memory leak, validasi client); (5) kalau informasi kurang, sebutkan 2-3 kemungkinan terkuat dan minta info spesifik (mis. isi Output lengkap, di mana script diletakkan, Script atau LocalScript). Jangan mengarang fungsi/properti Roblox yang tidak ada, dan jangan mengaku pasti kalau tidak yakin.`;
 
-const SCRIPT_RULES = `MODE PEMBUAT SCRIPT. Tulis script Luau LENGKAP dan siap pakai (bukan potongan). Format jawaban: (1) satu-dua kalimat ringkasan + asumsi yang kamu ambil kalau permintaan ambigu (sebut interpretasimu dan tawarkan variasi); (2) jenis script & LETAKNYA (mis. Script di ServerScriptService, LocalScript di StarterPlayerScripts, ModuleScript di ReplicatedStorage) beserta objek lain yang harus dibuat (RemoteEvent, folder, dll); (3) kode lengkap dalam SATU code block lua dengan bagian CONFIG di atas yang mudah diubah; (4) cara tes singkat. Aturan kode: gunakan API modern (task.wait, :Connect, tidak ada fungsi deprecated), validasi semua input client di server, bungkus DataStore/HTTP dengan pcall, putuskan koneksi/Destroy agar tidak memory leak, hindari loop berat tanpa yield, beri komentar singkat berbahasa Indonesia. Jangan mengarang API yang tidak ada. Kalau fitur butuh banyak script, berikan semuanya lengkap dan urut.`;
+const SCRIPT_RULES = `MODE PEMBUAT SCRIPT. Tulis script Luau LENGKAP dan siap pakai (bukan potongan). Format jawaban: (1) satu-dua kalimat ringkasan + asumsi yang kamu ambil kalau permintaan ambigu (sebut interpretasimu dan tawarkan variasi); (2) jenis script & LETAKNYA (mis. Script di ServerScriptService, LocalScript di StarterPlayerScripts, ModuleScript di ReplicatedStorage) ; SEMUA objek pendukung (RemoteEvent, folder, ScreenGui/UI, BoolValue) dibuat LEWAT KODE oleh script, jangan menyuruh user membuat objek manual; (3) kode lengkap dalam SATU code block lua dengan bagian CONFIG di atas yang mudah diubah; (4) cara tes singkat. Aturan kode: gunakan API modern (task.wait, :Connect, tidak ada fungsi deprecated), validasi semua input client di server, bungkus DataStore/HTTP dengan pcall, putuskan koneksi/Destroy agar tidak memory leak, hindari loop berat tanpa yield, beri komentar singkat berbahasa Indonesia. Jangan mengarang API yang tidak ada. Kalau fitur butuh banyak script, berikan semuanya lengkap dan urut. PENTING: setiap script yang kamu sebut di daftar/tabel HARUS punya kode lengkap sendiri di jawaban yang sama; jumlah code block harus sama dengan jumlah script. Jangan menyebut script yang tidak kamu tulis.`;
 
 function systemPrompt() {
   const maps = require('./data/maps.json');
@@ -88,6 +88,71 @@ function checkCooldown(userId) {
   return 0;
 }
 
+// Panggilan chat completion dengan retry saat kena rate limit (429)
+async function chat({ system, messages, maxTokens, temperature }) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
+      body: JSON.stringify({
+        model: await resolveModel(),
+        max_tokens: maxTokens,
+        temperature,
+        messages: [{ role: 'system', content: system }, ...messages],
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (res.status === 429 && attempt < 2) {
+      const wait = Math.min(parseFloat(res.headers.get('retry-after')) || 8, 20);
+      await new Promise(r => setTimeout(r, wait * 1000));
+      continue;
+    }
+    if (!res.ok) throw new Error(`AI API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    return {
+      text: data.choices?.[0]?.message?.content?.trim() || '',
+      truncated: data.choices?.[0]?.finish_reason === 'length',
+    };
+  }
+}
+
+const CODE_BLOCK = /```[\w]*\n([\s\S]*?)```/g;
+
+const CHECK_PROMPT = `Kamu pemeriksa kelengkapan jawaban pembuatan script Roblox. Teks berikut adalah jawaban seorang asisten; setiap blok kode diganti penanda [KODE n BARIS]. Tugasmu: temukan script atau UI yang DISEBUT (di daftar, tabel, atau penjelasan: Script, LocalScript, ModuleScript, atau ScreenGui/UI yang harus dibuat/diisi) tetapi TIDAK punya penanda [KODE ...] di bagiannya, termasuk objek UI yang disuruh dibuat manual. Abaikan objek sederhana yang cukup dibuat lewat kode di script lain (RemoteEvent, Folder, BoolValue). Balas HANYA JSON array tanpa teks lain: [{"name":"...","type":"Script|LocalScript|ModuleScript|ScreenGui","location":"..."}] atau [] jika semua lengkap.`;
+
+async function findMissingScripts(answer) {
+  const skeleton = answer.replace(CODE_BLOCK, (_, c) => `[KODE ${c.trim().split('\n').length} BARIS]`).slice(0, 9000);
+  const { text } = await chat({ system: CHECK_PROMPT, messages: [{ role: 'user', content: skeleton }], maxTokens: 700, temperature: 0 });
+  try {
+    const list = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? '[]');
+    return list.filter(m => m?.name).slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
+// Lengkapi script yang disebut tapi tidak ditulis oleh jawaban pertama
+async function completeMissing(userPrompt, answer, ui) {
+  const missing = await findMissingScripts(answer);
+  if (!missing.length) return answer;
+  const system = `${systemPrompt()}\n\n${SCRIPT_RULES}\n\n${loadCodeStandard()}${ui || missing.some(m => /gui|ui/i.test(m.type)) ? `\n\n${loadUiGuide()}` : ''}`;
+  let extra = '';
+  for (const m of missing) {
+    const prompt = `Permintaan awal pengguna:\n${userPrompt}\n\nJawaban sebelumnya (sudah ada, JANGAN diulang):\n${answer.slice(-9000)}\n\n` +
+      `Tuliskan KODE LENGKAP untuk yang masih kurang: ${m.name} (${m.type}) di ${m.location || 'letak yang sesuai'}. ` +
+      `Jika ini ScreenGui/UI (objek, bukan script), tulis sebagai LocalScript bernama ${m.name}Builder yang MEMBANGUN seluruh UI lewat kode (Instance.new), membuat ScreenGui bernama "${m.name}" di PlayerGui, dengan nama elemen/atribut yang sama seperti yang dipakai script lain di jawaban sebelumnya. ` +
+      `Balas HANYA: satu baris judul tebal "**nama** — jenis — letak", lalu SATU code block lua lengkap. Tanpa penjelasan lain.`;
+    try {
+      const r = await chat({ system, messages: [{ role: 'user', content: prompt }], maxTokens: 4096, temperature: 0.3 });
+      if (CODE_BLOCK.test(r.text)) extra += `\n\n${r.text}`;
+      CODE_BLOCK.lastIndex = 0;
+    } catch (err) {
+      console.error('[ai] gagal melengkapi', m.name, err.message);
+    }
+  }
+  return extra ? `${answer}\n\n---\n**Script tambahan (dilengkapi otomatis karena belum ada di jawaban pertama):**${extra}` : answer;
+}
+
 async function ask(channelId, userName, text, opts = {}) {
   if (!process.env.AI_API_KEY) return 'AI_API_KEY belum diisi, fitur AI belum aktif.';
 
@@ -96,21 +161,13 @@ async function ask(channelId, userName, text, opts = {}) {
   while (history.length > MAX_HISTORY) history.shift();
   while (history.length && history[0].role !== 'user') history.shift();
 
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
-    body: JSON.stringify({
-      model: await resolveModel(),
-      max_tokens: opts.knowledge ? 4096 : 2048,
-      temperature: opts.knowledge ? 0.3 : 0.7,
-      messages: [{ role: 'system', content: systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') + (opts.script ? `\n\n${SCRIPT_RULES}\n\n${loadCodeStandard()}${opts.ui ? `\n\n${loadUiGuide()}` : ''}` : opts.knowledge ? `\n\n${DEBUG_RULES}\n\nREFERENSI:\n${loadKnowledge()}` : '') }, ...history],
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`AI API ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
-  let answer = data.choices?.[0]?.message?.content?.trim() || '(tidak ada jawaban)';
-  if (data.choices?.[0]?.finish_reason === 'length') answer += '\n\n_(Jawaban terpotong karena batas panjang AI. Tulis "lanjut" untuk melanjutkan.)_';
+  const system = systemPrompt() + (opts.extra ? `\n\n${opts.extra}` : '') +
+    (opts.script ? `\n\n${SCRIPT_RULES}\n\n${loadCodeStandard()}${opts.ui ? `\n\n${loadUiGuide()}` : ''}` : opts.knowledge ? `\n\n${DEBUG_RULES}\n\nREFERENSI:\n${loadKnowledge()}` : '');
+  const r = await chat({ system, messages: history, maxTokens: opts.knowledge ? 4096 : 2048, temperature: opts.knowledge ? 0.3 : 0.7 });
+
+  let answer = r.text || '(tidak ada jawaban)';
+  if (r.truncated) answer += '\n\n_(Jawaban terpotong karena batas panjang AI. Tulis "lanjut" untuk melanjutkan.)_';
+  else if (opts.script) answer = await completeMissing(text, answer, opts.ui);
 
   if (!opts.noHistory) {
     history.push({ role: 'assistant', content: answer });

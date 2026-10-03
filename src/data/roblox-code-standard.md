@@ -22,3 +22,5 @@ C. STRUKTUR & KEBERLANJUTAN:
    - API modern saja (task.*, :Connect, tanpa deprecated). Jangan mengarang API.
 
 D. FORMAT JAWABAN: ringkasan singkat → **Asumsi** (bila ada) → daftar script + LETAK masing-masing → kode lengkap (satu code block per script, CONFIG di atas) → **Validasi & edge case yang ditangani** (bullet singkat) → **Cara tes** (langkah konkret) → **Cara mengembangkan** (di mana menambah item/fitur baru).
+
+E. KELENGKAPAN (wajib): jangan pernah menyuruh user membuat objek secara manual (ScreenGui, Frame, RemoteEvent, Folder, BoolValue). Server script membuat RemoteEvent/Folder lewat Instance.new bila belum ada; UI dibangun penuh lewat kode di LocalScript. Setiap script yang disebut di daftar HARUS ditulis lengkap di jawaban yang sama. Sebelum menjawab, cocokkan daftar script dengan code block: jumlahnya harus sama.
