@@ -61,6 +61,113 @@ function cardSvg({ qrisString, imageBuf, amount = null, merchant = '', nmid = ''
   return E.svgWrap(W, H, p, b);
 }
 
-const paymentCard = opts => E.render(cardSvg(opts), 1024);
+// ---------- Mode poster: poster QRIS resmi (mis. GoPay Merchant) utuh, QR diganti QR dinamis, dibingkai dark gold ----------
+// Koordinat dalam ruang poster referensi 1129x1600 (hasil pengukuran piksel). Hanya dipakai bila rasio gambar cocok.
+const POSTER = { w: 1129, h: 1600, cover: { x: 240, y: 580, w: 670, h: 677 }, qr: { x: 253.5, y: 596.5, size: 640 } };
 
-module.exports = { paymentCard, cardSvg };
+function imageSize(buf) {
+  if (buf[0] === 0x89 && buf[1] === 0x50) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i < buf.length - 9) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const m = buf[i + 1];
+      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return null;
+}
+
+// Apakah gambar ini poster dengan tata letak yang sama seperti POSTER (rasio ±2%)?
+function isKnownPoster(buf) {
+  const d = imageSize(buf);
+  return !!d && Math.abs(d.w / d.h - POSTER.w / POSTER.h) < 0.02 * (POSTER.w / POSTER.h);
+}
+
+// Daerah logo resmi pada poster referensi (hasil pengukuran piksel), dipotong lalu ditaruh di panel putih.
+const CROPS = {
+  qris: { x: 142, y: 282, w: 436, h: 78 },       // logo QRIS + "QR Code Standar Pembayaran Nasional"
+  gpn: { x: 898, y: 270, w: 92, h: 100 },        // logo GPN
+  footer: { x: 50, y: 1464, w: 1034, h: 106 },   // "Terima pembayaran QRIS dari mana saja" + logo bank
+  merchant: { x: 360, y: 424, w: 410, h: 148 },  // nama merchant + NMID + terminal (mode statis)
+  qr: { x: 247, y: 586, w: 654, h: 663 },        // QR statis bawaan poster (mode statis)
+};
+
+// Kartu hibrida: bingkai dark gold + panel putih berisi logo resmi (dipotong dari poster) + QR
+function posterSvg({ posterBuf, qrisString = null, amount = null, merchant = '', nmid = '', terminal = '' }) {
+  const p = E.PALETTES.darkgold;
+  const mime = sniff(posterBuf);
+  if (!mime) throw new Error('format poster tidak didukung');
+  const W = 1024, CX = W / 2;
+  const cardX = 132, cardW = 760, pad = 40;
+  let defs = `<image id="poster" href="data:${mime};base64,${posterBuf.toString('base64')}" width="${POSTER.w}" height="${POSTER.h}"/>`;
+  let n = 0;
+  // tempel potongan poster di (dx,dy) dengan lebar dw; mengembalikan {svg,h}
+  const crop = (r, dx, dy, dw) => {
+    const k = dw / r.w, h = r.h * k, id = `c${n++}`;
+    defs += `<clipPath id="${id}"><rect x="${dx}" y="${dy}" width="${dw}" height="${h}"/></clipPath>`;
+    return { h, svg: `<g clip-path="url(#${id})"><use href="#poster" transform="translate(${dx - r.x * k} ${dy - r.y * k}) scale(${k})"/></g>` };
+  };
+
+  let b = '';
+  let y = 110;
+  if (amount) {
+    b += E.text('sansM', 'TOTAL BAYAR', { x: CX, y: y + 18, size: 28, tracking: 0.42, fill: p.muted });
+    const label = `Rp ${amount.toLocaleString('id-ID')}`;
+    const size = E.fitSize('sansXB', label, 780, 128, 0.02);
+    b += E.text('sansXB', label, { x: CX, y: y + 40 + size * 0.86, size, tracking: 0.02, fill: 'url(#goldH)' });
+    y += 40 + size * 0.86 + 52;
+    b += `<g stroke="${p.mid}" stroke-width="2.5" opacity="0.9"><line x1="${CX - 270}" y1="${y}" x2="${CX - 26}" y2="${y}"/><line x1="${CX + 26}" y1="${y}" x2="${CX + 270}" y2="${y}"/></g>${diamond(CX, y, 11, 'url(#gold)')}`;
+    y += 56;
+  }
+
+  // ---- panel putih utama ----
+  const cardTop = y;
+  let cy = cardTop + pad;
+  let inner = '';
+  const q = crop(CROPS.qris, cardX + pad, cy, 318);
+  const g = crop(CROPS.gpn, cardX + cardW - pad - 66, cy - 2, 66);
+  inner += q.svg + g.svg;
+  cy += Math.max(q.h, g.h) + 34;
+
+  if (qrisString) {
+    const name = E.clean(merchant, 'sansB').toUpperCase();
+    if (name) { inner += E.text('sansB', name, { x: CX, y: cy + 26, size: E.fitSize('sansB', name, cardW - 2 * pad, 34, 0.02), tracking: 0.02, fill: '#111111' }); cy += 40; }
+    if (nmid) { inner += E.text('sansM', `NMID: ${nmid}`, { x: CX, y: cy + 20, size: 22, tracking: 0.03, fill: '#333333' }); cy += 32; }
+    if (terminal) { inner += E.text('sansM', E.clean(terminal, 'sansM'), { x: CX, y: cy + 20, size: 22, tracking: 0.1, fill: '#333333' }); cy += 32; }
+    cy += 22;
+    const qs = 540;
+    inner += qrPath(qrisString, CX - qs / 2, cy, qs);
+    cy += qs + pad;
+  } else {
+    const m = crop(CROPS.merchant, CX - 150, cy, 300);
+    inner += m.svg; cy += m.h + 10;
+    const qw = 520, qr = crop(CROPS.qr, CX - qw / 2, cy, qw);
+    inner += qr.svg; cy += qr.h + pad;
+  }
+  const cardH = cy - cardTop;
+  b += `<rect x="${cardX - 12}" y="${cardTop - 12}" width="${cardW + 24}" height="${cardH + 24}" rx="48" fill="none" stroke="url(#gold)" stroke-width="9"/>`;
+  b += `<rect x="${cardX}" y="${cardTop}" width="${cardW}" height="${cardH}" rx="38" fill="#FFFFFF"/>` + inner;
+
+  // ---- strip logo resmi di bawah ----
+  const stripX = 96, stripW = W - 2 * stripX, stripTop = cardTop + cardH + 44;
+  const f = crop(CROPS.footer, stripX + 30, stripTop + 22, stripW - 60);
+  const stripH = f.h + 44;
+  b += `<rect x="${stripX}" y="${stripTop}" width="${stripW}" height="${stripH}" rx="30" fill="#FFFFFF" stroke="url(#gold)" stroke-width="5"/>` + f.svg;
+
+  const H = Math.round(stripTop + stripH + 96);
+  // bingkai luar + sudut berlian (digambar terakhir agar di atas latar)
+  let frame = `<ellipse cx="${CX}" cy="${H * 0.45}" rx="560" ry="${H * 0.5}" fill="url(#glow)" opacity="0.55"/>`;
+  frame += `<rect x="30" y="30" width="${W - 60}" height="${H - 60}" fill="none" stroke="url(#gold)" stroke-width="6"/>`;
+  frame += `<rect x="54" y="54" width="${W - 108}" height="${H - 108}" fill="none" stroke="${p.mid}" stroke-opacity="0.5" stroke-width="1.6"/>`;
+  for (const [x, yy] of [[30, 30], [W - 30, 30], [30, H - 30], [W - 30, H - 30]]) frame += diamond(x, yy, 24, 'url(#gold)') + diamond(x, yy, 9, p.bg0);
+
+  const body = `<defs>${defs}</defs>` + frame + b;
+  return { svg: E.svgWrap(W, H, p, body), width: W };
+}
+
+const paymentCard = opts => E.render(cardSvg(opts), 1024);
+const posterCard = opts => { const { svg, width } = posterSvg(opts); return E.render(svg, width); };
+
+module.exports = { paymentCard, cardSvg, posterCard, posterSvg, isKnownPoster, imageSize };

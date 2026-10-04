@@ -28,9 +28,9 @@ client.once(Events.ClientReady, c => {
   console.log(`Online sebagai ${c.user.tag}`);
   if (process.env.QRIS_STRING) {
     const v = require('./qris').validate(process.env.QRIS_STRING);
-    console.log(v.ok ? '[qris] QRIS_STRING valid.' : `[qris] QRIS_STRING TIDAK VALID: ${v.reason}`);
+    console.log(v.ok ? `[qris] QRIS_STRING valid. Poster: ${require('./qris').loadPoster() ? 'assets/qris-poster dipakai' : 'tidak ada (kartu standar)'}.` : `[qris] QRIS_STRING TIDAK VALID: ${v.reason}`);
   } else {
-    console.log(`[qris] QRIS_STRING belum diisi. Mode cadangan: ${staticFile() ? 'gambar assets/qris.* ditemukan (pembeli ketik nominal sendiri)' : 'belum ada gambar assets/qris.* juga'}.`);
+    console.log(`[qris] QRIS_STRING belum diisi. Mode cadangan: ${require('./qris').loadPoster() || staticFile() ? 'gambar QR di assets ditemukan (pembeli ketik nominal sendiri)' : 'belum ada gambar QR di assets juga'}.`);
   }
 });
 
