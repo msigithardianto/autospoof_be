@@ -137,17 +137,17 @@ function posterSvg({ posterBuf, qrisString = null, amount = null, merchant = '',
     if (nmid) { inner += E.text('sansM', `NMID: ${nmid}`, { x: CX, y: cy + 20, size: 22, tracking: 0.03, fill: '#333333' }); cy += 32; }
     if (terminal) { inner += E.text('sansM', E.clean(terminal, 'sansM'), { x: CX, y: cy + 20, size: 22, tracking: 0.1, fill: '#333333' }); cy += 32; }
     cy += 10;
-    cy += 10;
-    if (amount) { const a = amountText(cy); inner += a.svg; cy += a.h + 26; } else cy += 12;
+    cy += 22;
     const qs = 540;
     inner += qrPath(qrisString, CX - qs / 2, cy, qs);
-    cy += qs + pad;
+    cy += qs + (amount ? 22 : pad);
+    if (amount) { const a = amountText(cy); inner += a.svg; cy += a.h + pad - 6; }
   } else {
     const m = crop(CROPS.merchant, CX - 150, cy, 300);
     inner += m.svg; cy += m.h + 10;
-    if (amount) { const a = amountText(cy); inner += a.svg; cy += a.h + 26; }
     const qw = 520, qr = crop(CROPS.qr, CX - qw / 2, cy, qw);
-    inner += qr.svg; cy += qr.h + pad;
+    inner += qr.svg; cy += qr.h + (amount ? 22 : pad);
+    if (amount) { const a = amountText(cy); inner += a.svg; cy += a.h + pad - 6; }
   }
   const cardH = cy - cardTop;
   b += `<rect x="${cardX - 12}" y="${cardTop - 12}" width="${cardW + 24}" height="${cardH + 24}" rx="48" fill="none" stroke="url(#gold)" stroke-width="9"/>`;
