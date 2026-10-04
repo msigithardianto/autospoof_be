@@ -78,7 +78,8 @@ client.on(Events.MessageCreate, async message => {
 
   // AI: dijawab jika bot di-mention, di-reply, atau di channel khusus AI (AI_CHANNEL_ID)
   const mentioned = message.mentions.has(client.user, { ignoreEveryone: true, ignoreRoles: true });
-  const inAiChannel = process.env.AI_CHANNEL_ID && message.channelId === process.env.AI_CHANNEL_ID;
+  const aiChannels = (process.env.AI_CHANNEL_ID || '').split(',').map(x => x.trim()).filter(Boolean); // boleh banyak, pisahkan koma
+  const inAiChannel = aiChannels.includes(message.channelId);
   if (!mentioned && !inAiChannel) return;
   const question = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
   // Jika user me-reply sebuah pesan (mis. error dari orang lain), sertakan isinya sebagai konteks
