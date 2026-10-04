@@ -70,16 +70,42 @@ const rupiah = n => `Rp${n.toLocaleString('id-ID')}`;
 // 1) QRIS_STRING valid  -> QRIS dinamis dengan nominal otomatis
 // 2) ada gambar statis   -> kirim gambar, pembeli mengetik nominal sendiri
 // 3) tidak ada keduanya  -> pesan kesalahan untuk admin
+const merchantName = qris => parseTLV(qris).find(t => t.tag === '59')?.value ?? '';
+// NMID (tag 51, sub 02) dan ID terminal (tag 62, sub 07) bila ada
+const sub = (qris, tag, subTag) => { try { return parseTLV(parseTLV(qris).find(t => t.tag === tag)?.value ?? '').find(t => t.tag === subTag)?.value ?? ''; } catch { return ''; } };
+const merchantInfo = qris => ({ merchant: merchantName(qris), nmid: sub(qris, '51', '02'), terminal: sub(qris, '62', '07') });
+
+// Kartu berbingkai dark gold; jika gagal dirender, kembali ke gambar polos
+async function framedOrPlain(framed, plain) {
+  try { return framed(); } catch (err) { console.error('[qris] bingkai gagal, pakai gambar polos:', err.message); return plain(); }
+}
+
 async function paymentPayload(amount) {
+  const { paymentCard } = require('./design/payment');
   if (process.env.QRIS_STRING && validate(process.env.QRIS_STRING).ok) {
-    const png = await qrisPng(process.env.QRIS_STRING, amount);
+    const dyn = makeDynamicQris(process.env.QRIS_STRING, amount);
+    const png = await framedOrPlain(
+      () => paymentCard({ qrisString: dyn, amount, ...merchantInfo(process.env.QRIS_STRING) }),
+      () => qrisPng(process.env.QRIS_STRING, amount));
     return { content: `Total bayar: **${rupiah(amount)}**\nScan QRIS di bawah (nominal sudah terisi), lalu kirim bukti transfer ke admin.`, files: [new AttachmentBuilder(png, { name: 'qris.png' })] };
   }
   const file = staticFile();
   if (file) {
-    return { content: `Total bayar: **${rupiah(amount)}**\nScan QR di bawah, **masukkan nominal ${rupiah(amount)} secara manual**, lalu kirim bukti transfer ke admin.`, files: [new AttachmentBuilder(file)] };
+    const img = fs.readFileSync(file);
+    const png = await framedOrPlain(() => paymentCard({ imageBuf: img, amount, merchant: process.env.MERCHANT_NAME || 'Arr Studio' }), () => img);
+    return { content: `Total bayar: **${rupiah(amount)}**\nScan QR di bawah, **masukkan nominal ${rupiah(amount)} secara manual**, lalu kirim bukti transfer ke admin.`, files: [new AttachmentBuilder(png, { name: 'qris.png' })] };
   }
   return { error: 'Belum ada QRIS. Admin: isi `QRIS_STRING` (teks QRIS berawalan 000201) di Variables, atau upload gambar QR ke `assets/qris.png`.' };
 }
 
-module.exports = { paymentPayload, staticFile, validate, crc16, parseTLV, makeDynamicQris, qrisPng };
+// QRIS tanpa nominal (balasan kata kunci "qris"): gambar statis dalam bingkai
+async function staticAttachment() {
+  const file = staticFile();
+  if (!file) return null;
+  const img = fs.readFileSync(file);
+  const { paymentCard } = require('./design/payment');
+  const png = await framedOrPlain(() => paymentCard({ imageBuf: img, merchant: process.env.MERCHANT_NAME || 'Arr Studio' }), () => img);
+  return new AttachmentBuilder(png, { name: 'qris.png' });
+}
+
+module.exports = { staticAttachment, paymentPayload, staticFile, validate, crc16, parseTLV, makeDynamicQris, qrisPng };

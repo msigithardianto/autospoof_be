@@ -53,11 +53,24 @@ const fitSize = (key, str, maxW, size, tracking = 0) => {
   return w > maxW ? (size * maxW) / w : size;
 };
 
+// Susun path SVG sendiri dari perintah glyph (toPathData opentype.js kadang menghasilkan NaN pada posisi tertentu)
+const n2 = v => String(Math.round(v * 100) / 100);
+function toD(cmds) {
+  return cmds.map(c => {
+    switch (c.type) {
+      case 'Z': return 'Z';
+      case 'Q': return `Q${n2(c.x1)} ${n2(c.y1)} ${n2(c.x)} ${n2(c.y)}`;
+      case 'C': return `C${n2(c.x1)} ${n2(c.y1)} ${n2(c.x2)} ${n2(c.y2)} ${n2(c.x)} ${n2(c.y)}`;
+      default: return `${c.type}${n2(c.x)} ${n2(c.y)}`;
+    }
+  }).join('');
+}
+
 // Mengembalikan <path> dengan teks sebagai outline. anchor: start | middle | end
 function text(key, str, { x, y, size, tracking = 0, anchor = 'middle', fill, opacity = 1 }) {
   const L = layout(key, str, size, tracking);
   const x0 = anchor === 'middle' ? x - L.width / 2 : anchor === 'end' ? x - L.width : x;
-  const d = L.items.map(it => it.g.getPath(x0 + it.x, y, size).toPathData(2)).join('');
+  const d = L.items.map(it => toD(it.g.getPath(x0 + it.x, y, size).commands)).join('');
   return `<path d="${d}" fill="${fill}" opacity="${opacity}"/>`;
 }
 
@@ -84,8 +97,10 @@ function initials(name) {
 // ---------- Palet ----------
 const GOLD = [[0, '#FFF3BF'], [0.22, '#E9C95D'], [0.5, '#B98A1C'], [0.76, '#F4D97E'], [1, '#9A7210']];
 const PLAT = [[0, '#FFFFFF'], [0.22, '#DDE2EC'], [0.5, '#98A2B6'], [0.76, '#EDF0F6'], [1, '#76809A']];
+const DARK = [[0, '#E0BE55'], [0.2, '#C79A1E'], [0.5, '#8E6A0C'], [0.78, '#C9A02A'], [1, '#5E4408']];
 const DGOLD = [[0, '#E2BF4E'], [0.5, '#A87C14'], [1, '#7C5A0A']];
 const PALETTES = {
+  darkgold: { name: 'Dark Gold', bg0: '#060504', bg1: '#17120A', stops: DARK, text: '#EADFC2', muted: '#9C8A5E', mid: '#B8860B', dark: false },
   gold:     { name: 'Emas Klasik', bg0: '#0A0A0D', bg1: '#1C1911', stops: GOLD, text: '#F3EBD3', muted: '#A99E7E', mid: '#D4AF37', dark: false },
   royal:    { name: 'Biru Royal + Emas', bg0: '#070B1C', bg1: '#162654', stops: GOLD, text: '#F3EBD3', muted: '#9FA9C9', mid: '#D4AF37', dark: false },
   crimson:  { name: 'Merah Marun + Emas', bg0: '#0D0607', bg1: '#35121A', stops: GOLD, text: '#F6E9D5', muted: '#C09A93', mid: '#D4AF37', dark: false },

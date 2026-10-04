@@ -1,3 +1,4 @@
+const { COLOR } = require('../theme');
 const { SlashCommandBuilder } = require('discord.js');
 const { listEmbed } = require('../utils');
 
@@ -6,6 +7,6 @@ module.exports = {
   async execute(interaction) {
     delete require.cache[require.resolve('../data/maps.json')]; // reload tanpa restart
     const maps = require('../data/maps.json');
-    await interaction.reply({ embeds: [listEmbed('🗺️ Map Ready', maps, 0x2ecc71)] });
+    await interaction.reply({ embeds: [listEmbed('🗺️ Map Ready', maps, COLOR)] });
   },
 };

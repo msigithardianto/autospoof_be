@@ -1,3 +1,4 @@
+const { COLOR } = require('../theme');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { load, roll } = require('../gacha');
 
@@ -8,7 +9,7 @@ module.exports = {
     const result = roll(cfg);
     const pools = result?.pools ?? [];
     const total = pools.reduce((s, p) => s + p.weight, 0);
-    const embed = new EmbedBuilder().setColor(0xe67e22).setTitle('🎰 Info Gacha')
+    const embed = new EmbedBuilder().setColor(COLOR).setTitle('🎰 Info Gacha')
       .setDescription(`Bisa gacha **1x tiap ${cfg.cooldownHours} jam** dengan \`/gacha\`.`);
     for (const p of pools) {
       embed.addFields({

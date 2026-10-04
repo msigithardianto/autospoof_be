@@ -2,7 +2,7 @@ require('dotenv').config({ quiet: true });
 console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7)}... env:`, ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI_API_KEY','QRIS_STRING'].map(k => `${k}=${process.env[k] ? 'ada' : 'KOSONG'}`).join(' '));
 const fs = require('fs');
 const path = require('path');
-const { paymentPayload, staticFile } = require('./qris');
+const { paymentPayload, staticFile, staticAttachment } = require('./qris');
 const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
@@ -75,9 +75,9 @@ client.on(Events.MessageCreate, async message => {
         if (!payload.error) return message.reply(payload);
       }
     }
-    const imgFile = staticFile();
+    const att = await staticAttachment();
     const payload = { content: qris.text };
-    if (imgFile) payload.files = [new AttachmentBuilder(imgFile)];
+    if (att) payload.files = [att];
     else payload.content += '\n(Gambar QRIS belum diupload ke assets/qris.png)';
     return message.reply(payload);
   }

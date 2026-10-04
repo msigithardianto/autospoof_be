@@ -4,6 +4,8 @@ const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, ActionRowBuilder, 
 
 const ROOT = path.join(__dirname, '..', '..', 'assets', 'pp');
 const IMG = /\.(png|jpe?g|webp|gif)$/i;
+const { COLOR } = require('../theme');
+const { frameImage, fetchBuffer } = require('../design/frame');
 const PREFIX = 'pp:';
 const OPT_OUT_ROLE = 'no-pp'; // anggota dengan role ini tidak akan ditampilkan
 
@@ -23,13 +25,21 @@ async function memberPayload(guild, who) {
   const eligible = all.filter(m => !m.user.bot && m.user.avatar && !m.roles.cache.some(r => r.name.toLowerCase() === OPT_OUT_ROLE));
   if (!eligible.length) return { content: 'Belum ada anggota dengan foto profil yang bisa ditampilkan.', flags: MessageFlags.Ephemeral };
   const m = rand(eligible);
-  const embed = new EmbedBuilder().setColor(0xd4af37).setTitle(`🖼️ PP ${m.displayName}`)
-    .setImage(m.displayAvatarURL({ size: 1024, extension: 'png' })).setFooter({ text: `Diminta oleh ${who} • tidak mau ditampilkan? pakai /ppoptout` });
+  const embed = new EmbedBuilder().setColor(COLOR).setFooter({ text: `Diminta oleh ${who} • tidak mau ditampilkan? pakai /ppoptout` });
+  const payload = {};
+  try {
+    const png = frameImage(await fetchBuffer(m.displayAvatarURL({ size: 1024, extension: 'png', forceStatic: true })), { caption: m.displayName });
+    payload.files = [new AttachmentBuilder(png, { name: 'pp.png' })];
+    embed.setImage('attachment://pp.png');
+  } catch (err) {
+    console.error('[pp] bingkai gagal, pakai gambar asli:', err.message);
+    embed.setTitle(`🖼️ PP ${m.displayName}`).setImage(m.displayAvatarURL({ size: 1024, extension: 'png' }));
+  }
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`${PREFIX}member`).setLabel('Acak lagi').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setLabel('Ukuran penuh').setStyle(ButtonStyle.Link).setURL(m.displayAvatarURL({ size: 4096, extension: 'png' })),
   );
-  return { embeds: [embed], components: [row] };
+  return { ...payload, embeds: [embed], components: [row] };
 }
 
 const intentHelp = { content: 'Aku belum bisa membaca daftar anggota. Admin: aktifkan **Server Members Intent** di Developer Portal → Bot, simpan, lalu coba lagi.', flags: MessageFlags.Ephemeral };
@@ -69,8 +79,11 @@ function pick(cat) {
 function buildPayload(cat, who) {
   const result = pick(cat);
   if (!result) return null;
-  const files = result.paths.map((p, i) => new AttachmentBuilder(p, { name: `pp_${i + 1}${path.extname(p).toLowerCase()}` }));
-  const embeds = files.map((f, i) => new EmbedBuilder().setColor(0xd4af37).setImage(`attachment://${f.name}`)
+  const files = result.paths.map((p, i) => {
+    try { return new AttachmentBuilder(frameImage(fs.readFileSync(p)), { name: `pp_${i + 1}.png` }); } // dibingkai dark gold
+    catch { return new AttachmentBuilder(p, { name: `pp_${i + 1}${path.extname(p).toLowerCase()}` }); }
+  });
+  const embeds = files.map((f, i) => new EmbedBuilder().setColor(COLOR).setImage(`attachment://${f.name}`)
     .setTitle(i === 0 ? `🖼️ PP ${result.cat}` : null).setFooter(i === files.length - 1 ? { text: `Diminta oleh ${who}` } : null));
   const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${PREFIX}${cat || 'acak'}`).setLabel('Acak lagi').setEmoji('🔄').setStyle(ButtonStyle.Secondary));
   return { embeds, files, components: [row] };
