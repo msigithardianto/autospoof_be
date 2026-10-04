@@ -146,6 +146,25 @@ async function chat({ system, messages, maxTokens, temperature }) {
   }
 }
 
+const BRIEF_PROMPT = `Kamu art director brand yang cerdas. Dari nama dan deskripsi, tentukan arahan desain logo/banner. Balas HANYA JSON valid tanpa teks lain: {"tagline":"...","style":"elegan|modern|minimal","palette":"gold|royal|crimson|emerald|platinum|ivory"}. Aturan: tagline 2-5 kata, singkat, kuat, tanpa emoji, bahasa sesuai deskripsi. style: elegan = mewah/klasik/premium, modern = teknologi/game/dinamis, minimal = bersih/profesional. palette: gold = mewah netral, royal = biru kerajaan, crimson = berani/aksi/horor, emerald = alam/segar, platinum = futuristik/dingin, ivory = terang/bersih.`;
+
+// Arahan desain dari AI (opsional). Mengembalikan null jika gagal.
+async function designBrief(name, idea) {
+  if (!process.env.AI_API_KEY || !idea) return null;
+  try {
+    const { text } = await chat({ system: BRIEF_PROMPT, messages: [{ role: 'user', content: `Nama: ${name}\nDeskripsi: ${idea}` }], maxTokens: 300, temperature: 0.7 });
+    const j = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{}');
+    return {
+      tagline: typeof j.tagline === 'string' ? j.tagline.slice(0, 40) : '',
+      style: ['elegan', 'modern', 'minimal'].includes(j.style) ? j.style : null,
+      palette: ['gold', 'royal', 'crimson', 'emerald', 'platinum', 'ivory'].includes(j.palette) ? j.palette : null,
+    };
+  } catch (err) {
+    console.error('[ai] designBrief gagal:', err.message);
+    return null;
+  }
+}
+
 const CODE_BLOCK = /```[\w]*\n([\s\S]*?)```/g;
 
 const CHECK_PROMPT = `Kamu pemeriksa kelengkapan jawaban pembuatan script Roblox. Teks berikut adalah jawaban seorang asisten; setiap blok kode diganti penanda [KODE n BARIS]. Tugasmu: temukan script atau UI yang DISEBUT (di daftar, tabel, atau penjelasan: Script, LocalScript, ModuleScript, atau ScreenGui/UI yang harus dibuat/diisi) tetapi TIDAK punya penanda [KODE ...] di bagiannya, termasuk objek UI yang disuruh dibuat manual. Abaikan objek sederhana yang cukup dibuat lewat kode di script lain (RemoteEvent, Folder, BoolValue). Balas HANYA JSON array tanpa teks lain: [{"name":"...","type":"Script|LocalScript|ModuleScript|ScreenGui","location":"..."}] atau [] jika semua lengkap.`;
@@ -272,4 +291,4 @@ function format(answer) {
 const UI_RE = /\b(ui|gui|menu|shop|toko|inventory|hud|tampilan|antarmuka|tombol|button|frame|screen ?gui|leaderboard|popup|notifikasi|loading screen|settings?)\b/i;
 const wantsUi = text => UI_RE.test(text);
 
-module.exports = { resetHistory, wantsUi, ask, chunk, format, checkCooldown, listModels, resolveModel };
+module.exports = { designBrief, resetHistory, wantsUi, ask, chunk, format, checkCooldown, listModels, resolveModel };
