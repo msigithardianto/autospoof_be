@@ -111,18 +111,18 @@ function posterSvg({ posterBuf, qrisString = null, amount = null, merchant = '',
   };
 
   let b = '';
-  let y = 108;
-
-  // Nominal sebagai bagian dari panel pembayaran: pil gelap berbingkai emas tepat di atas QR
-  const pill = (top) => {
-    const w = cardW - 2 * pad, h = 118, x = CX - w / 2;
+  let y = 100;
+  if (amount) {
+    b += E.text('sansM', 'TOTAL BAYAR', { x: CX, y: y + 12, size: 22, tracking: 0.42, fill: p.muted });
     const label = `Rp ${amount.toLocaleString('id-ID')}`;
-    const size = E.fitSize('sansXB', label, w - 70, 58, 0.02);
-    let out = `<rect x="${x}" y="${top}" width="${w}" height="${h}" rx="26" fill="#120F08" stroke="url(#gold)" stroke-width="4"/>`;
-    out += E.text('sansM', 'TOTAL BAYAR', { x: CX, y: top + 36, size: 19, tracking: 0.4, fill: p.muted });
-    out += E.text('sansXB', label, { x: CX, y: top + 50 + size * 0.8, size, tracking: 0.02, fill: 'url(#goldH)' });
-    return { svg: out, h };
-  };
+    const size = E.fitSize('sansXB', label, 500, 70, 0.02);
+    b += E.text('sansXB', label, { x: CX, y: y + 36 + size * 0.82, size, tracking: 0.02, fill: 'url(#goldH)' });
+    y += 36 + size * 0.82 + 34;
+    b += `<g stroke="${p.mid}" stroke-width="2" opacity="0.9"><line x1="${CX - 200}" y1="${y}" x2="${CX - 22}" y2="${y}"/><line x1="${CX + 22}" y1="${y}" x2="${CX + 200}" y2="${y}"/></g>${diamond(CX, y, 9, 'url(#gold)')}`;
+    y += 46;
+  } else {
+    y = 108;
+  }
 
   // ---- panel putih utama ----
   const cardTop = y;
@@ -139,14 +139,13 @@ function posterSvg({ posterBuf, qrisString = null, amount = null, merchant = '',
     if (nmid) { inner += E.text('sansM', `NMID: ${nmid}`, { x: CX, y: cy + 20, size: 22, tracking: 0.03, fill: '#333333' }); cy += 32; }
     if (terminal) { inner += E.text('sansM', E.clean(terminal, 'sansM'), { x: CX, y: cy + 20, size: 22, tracking: 0.1, fill: '#333333' }); cy += 32; }
     cy += 10;
-    if (amount) { const pl = pill(cy); inner += pl.svg; cy += pl.h + 26; } else cy += 12;
+    cy += 12;
     const qs = 540;
     inner += qrPath(qrisString, CX - qs / 2, cy, qs);
     cy += qs + pad;
   } else {
     const m = crop(CROPS.merchant, CX - 150, cy, 300);
     inner += m.svg; cy += m.h + 10;
-    if (amount) { const pl = pill(cy); inner += pl.svg; cy += pl.h + 26; }
     const qw = 520, qr = crop(CROPS.qr, CX - qw / 2, cy, qw);
     inner += qr.svg; cy += qr.h + pad;
   }
