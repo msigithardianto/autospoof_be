@@ -29,13 +29,16 @@ client.once(Events.ClientReady, c => console.log(`Online sebagai ${c.user.tag}`)
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.guildId && !isAllowed(interaction.guildId)) return; // server tidak diizinkan
   const isModal = interaction.isModalSubmit();
-  if (!interaction.isChatInputCommand() && !isModal) return;
+  const isButton = interaction.isButton();
+  if (!interaction.isChatInputCommand() && !isModal && !isButton) return;
   const cmd = isModal
     ? client.commands.find(c => c.modalId === interaction.customId)
-    : client.commands.get(interaction.commandName);
+    : isButton
+      ? client.commands.find(c => c.buttonPrefix && interaction.customId.startsWith(c.buttonPrefix))
+      : client.commands.get(interaction.commandName);
   if (!cmd) return;
   try {
-    await (isModal ? cmd.handleModal(interaction) : cmd.execute(interaction));
+    await (isModal ? cmd.handleModal(interaction) : isButton ? cmd.handleButton(interaction) : cmd.execute(interaction));
   } catch (err) {
     console.error(err);
     const msg = { content: 'Terjadi error saat menjalankan command.', flags: MessageFlags.Ephemeral };
