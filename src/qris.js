@@ -1,4 +1,7 @@
+const fs = require('fs');
+const path = require('path');
 const QRCode = require('qrcode');
+const { AttachmentBuilder } = require('discord.js');
 
 // CRC16-CCITT (poly 0x1021, init 0xFFFF) sesuai standar EMVCo/QRIS
 function crc16(str) {
@@ -52,4 +55,31 @@ function validate(str) {
   return { ok: true };
 }
 
-module.exports = { validate, crc16, parseTLV, makeDynamicQris, qrisPng };
+// Cari gambar QRIS statis (assets/qris.png|jpg|jpeg|webp)
+function staticFile() {
+  for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+    const f = path.join(__dirname, '..', 'assets', `qris.${ext}`);
+    if (fs.existsSync(f)) return f;
+  }
+  return null;
+}
+
+const rupiah = n => `Rp${n.toLocaleString('id-ID')}`;
+
+// Bentuk balasan pembayaran:
+// 1) QRIS_STRING valid  -> QRIS dinamis dengan nominal otomatis
+// 2) ada gambar statis   -> kirim gambar, pembeli mengetik nominal sendiri
+// 3) tidak ada keduanya  -> pesan kesalahan untuk admin
+async function paymentPayload(amount) {
+  if (process.env.QRIS_STRING && validate(process.env.QRIS_STRING).ok) {
+    const png = await qrisPng(process.env.QRIS_STRING, amount);
+    return { content: `Total bayar: **${rupiah(amount)}**\nScan QRIS di bawah (nominal sudah terisi), lalu kirim bukti transfer ke admin.`, files: [new AttachmentBuilder(png, { name: 'qris.png' })] };
+  }
+  const file = staticFile();
+  if (file) {
+    return { content: `Total bayar: **${rupiah(amount)}**\nScan QR di bawah, **masukkan nominal ${rupiah(amount)} secara manual**, lalu kirim bukti transfer ke admin.`, files: [new AttachmentBuilder(file)] };
+  }
+  return { error: 'Belum ada QRIS. Admin: isi `QRIS_STRING` (teks QRIS berawalan 000201) di Variables, atau upload gambar QR ke `assets/qris.png`.' };
+}
+
+module.exports = { paymentPayload, staticFile, validate, crc16, parseTLV, makeDynamicQris, qrisPng };

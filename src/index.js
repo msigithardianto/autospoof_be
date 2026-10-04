@@ -2,7 +2,7 @@ require('dotenv').config({ quiet: true });
 console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7)}... env:`, ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI_API_KEY','QRIS_STRING'].map(k => `${k}=${process.env[k] ? 'ada' : 'KOSONG'}`).join(' '));
 const fs = require('fs');
 const path = require('path');
-const { qrisPng } = require('./qris');
+const { paymentPayload, staticFile } = require('./qris');
 const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
@@ -30,7 +30,7 @@ client.once(Events.ClientReady, c => {
     const v = require('./qris').validate(process.env.QRIS_STRING);
     console.log(v.ok ? '[qris] QRIS_STRING valid.' : `[qris] QRIS_STRING TIDAK VALID: ${v.reason}`);
   } else {
-    console.log('[qris] QRIS_STRING belum diisi (fitur /qris nominal nonaktif).');
+    console.log(`[qris] QRIS_STRING belum diisi. Mode cadangan: ${staticFile() ? 'gambar assets/qris.* ditemukan (pembeli ketik nominal sendiri)' : 'belum ada gambar assets/qris.* juga'}.`);
   }
 });
 
@@ -65,22 +65,19 @@ client.on(Events.MessageCreate, async message => {
   const has = triggers => triggers.some(t => text.includes(t));
 
   if (has(qris.triggers)) {
-    // "qris 50000" / "qris 50k" -> QRIS dinamis dengan nominal (butuh QRIS_STRING di .env)
+    // "qris 50000" / "qris 50k" -> pembayaran dengan nominal (QRIS dinamis, atau gambar statis sebagai cadangan)
     const m = text.match(/(\d[\d.]*)\s*(k|rb|ribu)?\b/);
-    if (m && process.env.QRIS_STRING && require('./qris').validate(process.env.QRIS_STRING).ok) {
+    if (m) {
       let amount = parseInt(m[1].replace(/\./g, ''), 10);
       if (m[2]) amount *= 1000;
       if (amount >= 1000 && amount <= 100000000) {
-        const png = await qrisPng(process.env.QRIS_STRING, amount);
-        return message.reply({
-          content: `Total bayar: **Rp${amount.toLocaleString('id-ID')}**. Scan lalu kirim bukti transfer ke admin.`,
-          files: [new AttachmentBuilder(png, { name: 'qris.png' })],
-        });
+        const payload = await paymentPayload(amount);
+        if (!payload.error) return message.reply(payload);
       }
     }
-    const imgPath = path.join(__dirname, '..', qris.image);
+    const imgFile = staticFile();
     const payload = { content: qris.text };
-    if (fs.existsSync(imgPath)) payload.files = [new AttachmentBuilder(imgPath)];
+    if (imgFile) payload.files = [new AttachmentBuilder(imgFile)];
     else payload.content += '\n(Gambar QRIS belum diupload ke assets/qris.png)';
     return message.reply(payload);
   }
