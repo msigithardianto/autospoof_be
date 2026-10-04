@@ -41,4 +41,15 @@ async function qrisPng(staticQris, amount) {
   return QRCode.toBuffer(makeDynamicQris(staticQris, amount), { width: 600, margin: 2 });
 }
 
-module.exports = { crc16, parseTLV, makeDynamicQris, qrisPng };
+// Cek bentuk string QRIS: awalan 000201, CRC valid, dan bisa di-parse
+function validate(str) {
+  const q = String(str ?? '').trim();
+  if (!q) return { ok: false, reason: 'kosong' };
+  if (!q.startsWith('000201')) return { ok: false, reason: 'harus diawali 000201 (bukan teks QRIS)' };
+  if (q.slice(-8, -4) !== '6304') return { ok: false, reason: 'tidak diakhiri 6304 + 4 karakter CRC (kepotong saat disalin?)' };
+  if (crc16(q.slice(0, -4)) !== q.slice(-4).toUpperCase()) return { ok: false, reason: 'CRC tidak cocok (ada karakter yang salah/terpotong/spasi)' };
+  try { parseTLV(q); } catch { return { ok: false, reason: 'struktur tidak valid' }; }
+  return { ok: true };
+}
+
+module.exports = { validate, crc16, parseTLV, makeDynamicQris, qrisPng };

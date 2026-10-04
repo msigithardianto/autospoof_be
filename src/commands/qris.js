@@ -9,6 +9,8 @@ module.exports = {
     if (!process.env.QRIS_STRING) {
       return interaction.reply({ content: 'QRIS_STRING belum diisi di .env.', flags: MessageFlags.Ephemeral });
     }
+    const check = require('../qris').validate(process.env.QRIS_STRING);
+    if (!check.ok) return interaction.reply({ content: `QRIS_STRING tidak valid: ${check.reason}. Admin: salin ulang teks QRIS ke Variables.`, flags: MessageFlags.Ephemeral });
     const nominal = interaction.options.getInteger('nominal');
     const png = await qrisPng(process.env.QRIS_STRING, nominal);
     await interaction.reply({

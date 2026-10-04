@@ -24,7 +24,15 @@ for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
   client.commands.set(cmd.data.name, cmd);
 }
 
-client.once(Events.ClientReady, c => console.log(`Online sebagai ${c.user.tag}`));
+client.once(Events.ClientReady, c => {
+  console.log(`Online sebagai ${c.user.tag}`);
+  if (process.env.QRIS_STRING) {
+    const v = require('./qris').validate(process.env.QRIS_STRING);
+    console.log(v.ok ? '[qris] QRIS_STRING valid.' : `[qris] QRIS_STRING TIDAK VALID: ${v.reason}`);
+  } else {
+    console.log('[qris] QRIS_STRING belum diisi (fitur /qris nominal nonaktif).');
+  }
+});
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.guildId && !isAllowed(interaction.guildId)) return; // server tidak diizinkan
@@ -59,7 +67,7 @@ client.on(Events.MessageCreate, async message => {
   if (has(qris.triggers)) {
     // "qris 50000" / "qris 50k" -> QRIS dinamis dengan nominal (butuh QRIS_STRING di .env)
     const m = text.match(/(\d[\d.]*)\s*(k|rb|ribu)?\b/);
-    if (m && process.env.QRIS_STRING) {
+    if (m && process.env.QRIS_STRING && require('./qris').validate(process.env.QRIS_STRING).ok) {
       let amount = parseInt(m[1].replace(/\./g, ''), 10);
       if (m[2]) amount *= 1000;
       if (amount >= 1000 && amount <= 100000000) {
