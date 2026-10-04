@@ -84,6 +84,17 @@ client.on(Events.MessageCreate, async message => {
   const aiChannels = (process.env.AI_CHANNEL_ID || '').split(',').map(x => x.trim()).filter(Boolean); // boleh banyak, pisahkan koma
   const inAiChannel = aiChannels.includes(message.channelId);
   if (!mentioned && !inAiChannel) return;
+  // Di channel AI, jangan nimbrung kalau pesan ditujukan ke orang lain (mention orang/role/@everyone atau reply ke pesan orang lain)
+  if (!mentioned) {
+    const mentionsOthers = message.mentions.users.some(u => u.id !== message.author.id && u.id !== client.user.id) ||
+      message.mentions.roles.size > 0 || message.mentions.everyone;
+    let repliesToOther = false;
+    if (message.reference?.messageId) {
+      const ref = await message.fetchReference().catch(() => null);
+      repliesToOther = !!ref && ref.author.id !== client.user.id;
+    }
+    if (mentionsOthers || repliesToOther) return;
+  }
   const question = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
   // Jika user me-reply sebuah pesan (mis. error dari orang lain), sertakan isinya sebagai konteks
   let quoted = '';
