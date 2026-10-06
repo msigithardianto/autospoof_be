@@ -218,6 +218,28 @@ function startStoreApi(client) {
     res.set('Cache-Control', 'private, max-age=600').type('png').send(png);
   });
 
+  /* ---------- Admin (dashboard web, password dicek di server Next) ---------- */
+  const adminView = ({ channelId, messageId, ...o }) => ({ ...o, posted: Boolean(messageId) });
+
+  app.get('/admin/orders', auth, (_req, res) => {
+    for (const o of orders.overdue()) {
+      const next = orders.transition(o.id, 'expired');
+      if (next) refreshMessage(client, next);
+    }
+    res.set('Cache-Control', 'no-store').json({ orders: orders.all().map(adminView) });
+  });
+
+  app.post('/admin/orders/:id/status', auth, async (req, res) => {
+    const status = req.body?.status;
+    const o = ID_RE.test(req.params.id) ? orders.get(req.params.id) : null;
+    if (!o) return res.status(404).json({ error: 'not_found' });
+    const next = STATUS[status] && orders.transition(o.id, status, { updatedBy: 'admin (web)' });
+    if (!next) return res.status(409).json({ error: 'invalid_transition', order: adminView(o) });
+    res.json({ order: adminView(next) });
+    refreshMessage(client, next);
+    dmBuyer(client, next, BUYER_DM[status]);
+  });
+
   app.post('/orders/:id/cancel', auth, async (req, res) => {
     const o = own(req, res);
     if (!o) return;
