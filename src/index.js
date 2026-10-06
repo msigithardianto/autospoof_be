@@ -1,10 +1,11 @@
 require('dotenv').config({ quiet: true });
-console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7)}... env:`, ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI_API_KEY','QRIS_STRING'].map(k => `${k}=${process.env[k] ? 'ada' : 'KOSONG'}`).join(' '));
+console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7)}... env:`, ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','AI_API_KEY','QRIS_STRING','STORE_API_KEY','ORDER_CHANNEL_ID'].map(k => `${k}=${process.env[k] ? 'ada' : 'KOSONG'}`).join(' '));
 const fs = require('fs');
 const path = require('path');
 const { paymentPayload, staticFile, staticAttachment } = require('./qris');
 const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
+const { startStoreApi, handleOrderButton } = require('./store-api');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -39,6 +40,8 @@ client.on(Events.InteractionCreate, async interaction => {
   const isModal = interaction.isModalSubmit();
   const isButton = interaction.isButton();
   if (!interaction.isChatInputCommand() && !isModal && !isButton) return;
+  // Tombol admin di embed order VOLT.STORE
+  if (isButton && interaction.customId.startsWith('order:')) return handleOrderButton(interaction).catch(err => console.error('[store] tombol order:', err));
   const cmd = isModal
     ? client.commands.find(c => c.modalId === interaction.customId)
     : isButton
@@ -140,6 +143,7 @@ if (!process.env.DISCORD_TOKEN) {
   console.error('LOGIN GAGAL: DISCORD_TOKEN belum diisi di Variables.');
   process.exit(1);
 }
+startStoreApi(client);
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error(`LOGIN GAGAL [${err.code ?? 'ERR'}]: ${err.message}`);
   const key = /disallowed intents/i.test(err.message) ? 'DisallowedIntents' : /invalid token/i.test(err.message) ? 'TokenInvalid' : err.code;
