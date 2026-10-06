@@ -42,6 +42,8 @@ function isHome(guildId) {
 }
 
 const isShopGuild = guildId => shopGuilds.has(guildId);
+/** Daftar server toko pernah berhasil dimuat dari API toko. Belum → jangan keluar dari server mana pun. */
+const shopListReady = () => lastRefresh > 0;
 
 /** Fitur penuh (AI, command, auto-reply) hanya di server rumah. */
 const isAllowed = isHome;
@@ -81,6 +83,10 @@ async function leaveIfUnknown(client, guildId) {
   if (!guild || isHome(guild.id)) return;
   await refreshShopGuilds(true);
   if (isShopGuild(guild.id)) return;
+  if (!shopListReady()) {
+    console.warn(`[guard] daftar server toko belum bisa dimuat (cek STORE_URL & STORE_API_KEY) — tetap di ${guild.name} (${guild.id}).`);
+    return;
+  }
   const inviter = await findInviter(client, guild);
   const info = `Bot keluar dari server yang tidak terdaftar sebagai toko VOLT.STORE.\n` +
     `Server: ${guild.name} (${guild.id})\nPemilik server: ${guild.ownerId}\nAnggota: ${guild.memberCount}\n` +

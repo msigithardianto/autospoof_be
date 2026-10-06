@@ -3,7 +3,7 @@ console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal
 const fs = require('fs');
 const path = require('path');
 const { paymentPayload, staticFile, staticAttachment } = require('./qris');
-const { setup: setupGuard, isAllowed, isShopGuild } = require('./guard');
+const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { startStoreApi, handleOrderButton } = require('./store-api');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
@@ -36,14 +36,14 @@ client.once(Events.ClientReady, c => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  // Server toko VOLT.STORE: hanya tombol order; server lain yang tidak diizinkan: abaikan
-  const orderButton = interaction.isButton() && interaction.customId.startsWith('order:');
-  if (interaction.guildId && !isAllowed(interaction.guildId) && !(orderButton && isShopGuild(interaction.guildId))) return;
+  // Tombol order VOLT.STORE: selalu dijawab (hak akses dicek API toko), walau daftar server toko belum termuat —
+  // kalau diabaikan, Discord menampilkan "didn't respond in time".
+  if (interaction.isButton() && interaction.customId.startsWith('order:')) return handleOrderButton(interaction).catch(err => console.error('[store] tombol order:', err));
+  // Server lain yang tidak diizinkan: abaikan
+  if (interaction.guildId && !isAllowed(interaction.guildId)) return;
   const isModal = interaction.isModalSubmit();
   const isButton = interaction.isButton();
   if (!interaction.isChatInputCommand() && !isModal && !isButton) return;
-  // Tombol admin di embed order VOLT.STORE
-  if (isButton && interaction.customId.startsWith('order:')) return handleOrderButton(interaction).catch(err => console.error('[store] tombol order:', err));
   const cmd = isModal
     ? client.commands.find(c => c.modalId === interaction.customId)
     : isButton
