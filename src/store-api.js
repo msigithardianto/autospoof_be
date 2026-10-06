@@ -121,6 +121,7 @@ async function handleOrderButton(interaction) {
 /* ---------- HTTP API ---------- */
 function auth(req, res, next) {
   const key = process.env.STORE_API_KEY;
+  if (!key) return res.status(503).json({ error: 'store_api_key_not_set' });
   const given = req.get('x-api-key') ?? '';
   const ok = key && given.length === key.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(key));
   if (!ok) return res.status(401).json({ error: 'unauthorized' });
@@ -151,15 +152,21 @@ function validOrder(b) {
 }
 
 function startStoreApi(client) {
-  if (!process.env.STORE_API_KEY) {
-    console.warn('[store] STORE_API_KEY kosong — API toko tidak dijalankan.');
-    return;
-  }
+  // Server HTTP selalu jalan supaya /health bisa dipakai cek konfigurasi dari browser
+  if (!process.env.STORE_API_KEY) console.warn('[store] STORE_API_KEY kosong — endpoint order menolak semua request (503).');
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '64kb' }));
 
-  app.get('/health', (_req, res) => res.json({ ok: true, discord: client.isReady() }));
+  app.get('/health', (_req, res) =>
+    res.json({
+      ok: true,
+      version: (process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7),
+      discord: client.isReady(),
+      storeApiKey: Boolean(process.env.STORE_API_KEY),
+      orderChannel: Boolean(process.env.ORDER_CHANNEL_ID),
+      qris: Boolean(process.env.QRIS_STRING) && validate(process.env.QRIS_STRING).ok,
+    }));
 
   app.post('/orders', auth, async (req, res) => {
     const b = req.body;
