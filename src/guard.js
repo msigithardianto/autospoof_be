@@ -3,6 +3,7 @@
 // - Server toko VOLT.STORE (didaftarkan seller lewat dashboard): hanya notifikasi & tombol order.
 // - Server lain: diberi waktu GRACE_MS untuk didaftarkan seller, lalu bot keluar otomatis.
 const { Events, AuditLogEvent, Team } = require('discord.js');
+const { storeUrl } = require('./store-url');
 
 const GRACE_MS = 15 * 60_000;
 const REFRESH_MS = 5 * 60_000;
@@ -17,10 +18,11 @@ let shopGuilds = new Set();
 let lastRefresh = 0;
 
 async function refreshShopGuilds(force = false) {
-  if (!process.env.STORE_URL || !process.env.STORE_API_KEY) return shopGuilds;
+  const base = storeUrl();
+  if (!base || !process.env.STORE_API_KEY) return shopGuilds;
   if (!force && Date.now() - lastRefresh < REFRESH_MS) return shopGuilds;
   try {
-    const res = await fetch(`${process.env.STORE_URL.replace(/\/+$/, '')}/api/bot/guilds`, {
+    const res = await fetch(`${base}/api/bot/guilds`, {
       headers: { 'x-api-key': process.env.STORE_API_KEY },
       signal: AbortSignal.timeout(8000),
     });

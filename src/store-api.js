@@ -5,10 +5,12 @@ const {
 } = require('discord.js');
 const { isHome, refreshShopGuilds } = require('./guard');
 const { qrisPng, validate } = require('./qris');
+const { storeUrl, learnStoreUrl } = require('./store-url');
 
 /* Jembatan VOLT.STORE <-> bot. Data order ada di database toko (Supabase); bot hanya notifier:
    - store -> bot (HTTP, dikunci STORE_API_KEY): kirim/perbarui embed order, DM user, QRIS platform.
-   - bot -> store: klik tombol status di Discord -> POST {STORE_URL}/api/bot/orders/:id/status.
+   - bot -> store: klik tombol status di Discord -> POST {alamat toko}/api/bot/orders/:id/status.
+     Alamat toko = env STORE_URL, atau otomatis dari header x-store-url yang dikirim web (lihat store-url.js).
    Order toko resmi -> ORDER_CHANNEL_ID. Order toko seller -> channel toko (bila dipasang) atau DM seller. */
 
 const STATUS = {
@@ -129,10 +131,11 @@ async function handleOrderButton(interaction) {
   const reply = content => interaction.reply({ content, flags: MessageFlags.Ephemeral });
 
   if (!UUID_RE.test(id ?? '')) return reply('Order lama ini tidak lagi didukung. Kelola pesanan di dashboard VOLT.STORE.');
-  if (!process.env.STORE_URL) return reply('STORE_URL belum diisi di bot.');
+  const base = storeUrl();
+  if (!base) return reply('Bot belum terhubung ke VOLT.STORE. Buka dashboard admin sekali (tab Sistem) agar terhubung otomatis, lalu coba lagi.');
 
   await interaction.deferUpdate();
-  const res = await fetch(`${process.env.STORE_URL.replace(/\/+$/, '')}/api/bot/orders/${id}/status`, {
+  const res = await fetch(`${base}/api/bot/orders/${id}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.STORE_API_KEY ?? '' },
     body: JSON.stringify({
@@ -159,21 +162,29 @@ async function handleOrderButton(interaction) {
 }
 
 /* ---------- HTTP API ---------- */
+const sha = s => crypto.createHash('sha256').update(String(s)).digest();
+const keyValid = req => Boolean(process.env.STORE_API_KEY) && crypto.timingSafeEqual(sha(req.get('x-api-key') ?? ''), sha(process.env.STORE_API_KEY));
+
 function auth(req, res, next) {
-  const key = process.env.STORE_API_KEY;
-  if (!key) return res.status(503).json({ error: 'store_api_key_not_set' });
-  const sha = s => crypto.createHash('sha256').update(String(s)).digest();
-  if (!crypto.timingSafeEqual(sha(req.get('x-api-key') ?? ''), sha(key))) return res.status(401).json({ error: 'unauthorized' });
+  if (!process.env.STORE_API_KEY) return res.status(503).json({ error: 'store_api_key_not_set' });
+  if (!keyValid(req)) return res.status(401).json({ error: 'unauthorized' });
+  next();
+}
+
+/** Request ber-key dari web membawa alamatnya sendiri → bot tahu ke mana memanggil balik (tanpa STORE_URL manual). */
+function learnOrigin(req, _res, next) {
+  if (req.get('x-store-url') && keyValid(req) && learnStoreUrl(req.get('x-store-url'))) refreshShopGuilds(true).catch(() => {});
   next();
 }
 
 function startStoreApi(client) {
   // Server HTTP selalu jalan supaya /health bisa dipakai cek konfigurasi dari browser
   if (!process.env.STORE_API_KEY) console.warn('[store] STORE_API_KEY kosong — endpoint toko menolak semua request (503).');
-  if (!process.env.STORE_URL) console.warn('[store] STORE_URL kosong — tombol order di Discord tidak bisa dipakai.');
+  if (!storeUrl()) console.warn('[store] alamat toko belum diketahui — terisi otomatis saat web pertama kali menghubungi bot (atau isi STORE_URL).');
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '64kb' }));
+  app.use(learnOrigin);
 
   app.get('/health', (_req, res) =>
     res.json({
@@ -181,7 +192,7 @@ function startStoreApi(client) {
       version: (process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal').slice(0, 7),
       discord: client.isReady(),
       storeApiKey: Boolean(process.env.STORE_API_KEY),
-      storeUrl: Boolean(process.env.STORE_URL),
+      storeUrl: Boolean(storeUrl()),
       orderChannel: Boolean(process.env.ORDER_CHANNEL_ID),
       qris: Boolean(process.env.QRIS_STRING) && validate(process.env.QRIS_STRING).ok,
     }));
