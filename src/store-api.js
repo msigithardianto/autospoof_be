@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const express = require('express');
 const {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, OAuth2Scopes, PermissionFlagsBits, escapeMarkdown,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, FileUploadBuilder, LabelBuilder, MessageFlags, ModalBuilder,
+  OAuth2Scopes, PermissionFlagsBits, TextInputBuilder, TextInputStyle, escapeMarkdown,
 } = require('discord.js');
 const { isHome, refreshShopGuilds } = require('./guard');
 const { qrisPng, validate } = require('./qris');
@@ -66,13 +67,18 @@ function orderEmbed(o) {
       { name: 'Pembeli', value: buyer, inline: true },
       { name: 'Metode', value: PAY_LABEL[o.payment] ?? o.payment, inline: true },
       { name: 'Batas bayar', value: `<t:${Math.floor(o.expiresAt / 1000)}:R>`, inline: true },
-      { name: 'Item', value: clip(lines || '-', 1024) },
+      { name: 'Item', value: cut(lines || '-', 1024) },
       { name: 'Pembayaran', value: money },
-      { name: 'Data pengiriman', value: clip(delivery || '-', 1024) },
+      { name: 'Data pengiriman', value: cut(delivery || '-', 1024) },
     )
     .setFooter({ text: o.updatedBy ? `Terakhir diubah: ${clip(o.updatedBy, 60)}` : 'VOLT.STORE' })
     .setTimestamp(o.createdAt);
   if (o.priceMismatch) embed.addFields({ name: 'Peringatan', value: 'Cek nominal sebelum konfirmasi.' });
+  if (o.proof?.images?.length) {
+    const links = o.proof.images.map((u, i) => `[Foto ${i + 1}](${u})`).join(' · ');
+    embed.addFields({ name: 'Bukti pengiriman', value: cut(`${links}${o.proof.note ? `\n${clip(o.proof.note, 300)}` : ''}`, 1024) });
+    embed.setImage(o.proof.images[0]);
+  }
   return embed;
 }
 
@@ -88,10 +94,15 @@ function orderButtons(o) {
 
 const view = o => ({ embeds: [orderEmbed(o)], components: orderButtons(o), allowedMentions: NO_PING });
 
-async function dm(client, userId, text) {
+/** Foto bukti pengiriman sebagai embed gambar (DM pembeli). */
+const proofEmbeds = o => (o?.proof?.images ?? []).slice(0, PROOF_MAX).map((u, i) =>
+  new EmbedBuilder().setColor(STATUS.completed.color).setTitle(`Bukti pengiriman ${o.code}${o.proof.images.length > 1 ? ` (${i + 1})` : ''}`)
+    .setDescription(i === 0 && o.proof.note ? clip(o.proof.note, 300) : null).setImage(u));
+
+async function dm(client, userId, text, embeds = []) {
   if (!text || !DISCORD_ID.test(String(userId))) return false;
   const user = await client.users.fetch(userId).catch(() => null);
-  return Boolean(await user?.send({ content: text, allowedMentions: NO_PING }).catch(() => null)); // DM tertutup -> abaikan
+  return Boolean(await user?.send({ content: text, embeds, allowedMentions: NO_PING }).catch(() => null)); // DM tertutup -> abaikan
 }
 
 /** Kirim embed baru (channel admin / channel toko / DM seller), atau edit yang sudah ada. Mengembalikan referensi pesan. */
@@ -124,17 +135,55 @@ async function upsertOrderMessage(client, o, sellerDiscordId, sellerChannelId, r
 }
 
 /* ---------- Tombol status ---------- */
-/** Tombol `order:<status>:<uuid>` -> diteruskan ke API toko (sumber data). */
+const PROOF_MAX = 3;
+const IMAGE_TYPES = /^image\/(png|jpe?g|webp)$/;
+
+/** Modal "Selesai": foto bukti pengiriman wajib (1–3) + catatan opsional untuk pembeli. */
+function proofModal(id) {
+  return new ModalBuilder()
+    .setCustomId(`orderproof:${id}`)
+    .setTitle('Bukti pengiriman')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('Foto bukti (wajib)')
+        .setDescription('Screenshot bahwa pesanan sudah dikirim, mis. riwayat transfer Robux. Dilihat pembeli.')
+        .setFileUploadComponent(new FileUploadBuilder().setCustomId('proof').setMinValues(1).setMaxValues(PROOF_MAX).setRequired(true)),
+      new LabelBuilder()
+        .setLabel('Catatan untuk pembeli (opsional)')
+        .setTextInputComponent(new TextInputBuilder().setCustomId('note').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(300)),
+    );
+}
+
+/** Tombol `order:<status>:<uuid>` -> diteruskan ke API toko (sumber data). "Selesai" membuka modal bukti dulu. */
 async function handleOrderButton(interaction) {
   const [scope, status, id] = interaction.customId.split(':');
   if (scope !== 'order') return false;
   const reply = content => interaction.reply({ content, flags: MessageFlags.Ephemeral });
 
   if (!UUID_RE.test(id ?? '')) return reply('Order lama ini tidak lagi didukung. Kelola pesanan di dashboard VOLT.STORE.');
-  const base = storeUrl();
-  if (!base) return reply('Bot belum terhubung ke VOLT.STORE. Buka dashboard admin sekali (tab Sistem) agar terhubung otomatis, lalu coba lagi.');
+  if (!storeUrl()) return reply('Bot belum terhubung ke VOLT.STORE. Buka dashboard admin sekali (tab Sistem) agar terhubung otomatis, lalu coba lagi.');
+  if (status === 'completed') return interaction.showModal(proofModal(id));
 
   await interaction.deferUpdate();
+  return callStore(interaction, id, status, {});
+}
+
+/** Kiriman modal bukti -> tandai selesai beserta foto. */
+async function handleProofModal(interaction) {
+  const [scope, id] = interaction.customId.split(':');
+  if (scope !== 'orderproof' || !UUID_RE.test(id ?? '')) return false;
+  const files = [...(interaction.fields.getUploadedFiles('proof')?.values() ?? [])];
+  if (!files.length || files.some(f => !IMAGE_TYPES.test(f.contentType ?? ''))) {
+    return interaction.reply({ content: 'Bukti harus berupa foto (PNG, JPG, atau WEBP).', flags: MessageFlags.Ephemeral });
+  }
+  const note = interaction.fields.getTextInputValue('note')?.trim() || null;
+  // Modal dibuka dari tombol di pesan -> deferUpdate memperbarui pesan embed yang sama
+  await interaction.deferUpdate();
+  return callStore(interaction, id, 'completed', { proof: files.slice(0, PROOF_MAX).map(f => f.url), note });
+}
+
+async function callStore(interaction, id, status, extra) {
+  const base = storeUrl();
   const res = await fetch(`${base}/api/bot/orders/${id}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.STORE_API_KEY ?? '' },
@@ -145,16 +194,19 @@ async function handleOrderButton(interaction) {
       admin: Boolean(interaction.inGuild() && interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)),
       guildId: interaction.guildId ?? null,
       home: Boolean(interaction.inGuild() && isHome(interaction.guildId)),
+      ...extra,
     }),
-    signal: AbortSignal.timeout(10000),
+    // Selesai: toko mengunduh & menyimpan foto bukti → beri waktu lebih
+    signal: AbortSignal.timeout(status === 'completed' ? 25000 : 10000),
   }).catch(() => null);
   const data = await res?.json().catch(() => null);
 
   if (data?.order) await interaction.editReply(view(data.order)).catch(() => {});
-  if (res?.ok) await dm(interaction.client, data.order.buyer.id, data.dmBuyer);
+  if (res?.ok) await dm(interaction.client, data.order.buyer.id, data.dmBuyer, proofEmbeds(data.order));
   else {
     const msg = res?.status === 403 ? 'Kamu tidak berhak mengubah order ini.'
       : res?.status === 409 ? 'Status order sudah berubah — pesan diperbarui.'
+      : res?.status === 400 && data?.error && !/^[a-z_]+$/.test(data.error) ? data.error
       : 'Gagal menghubungi VOLT.STORE. Coba lagi.';
     await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
   }
@@ -206,7 +258,7 @@ function startStoreApi(client) {
       console.error('[store] gagal kirim embed order:', err.message);
       return null;
     });
-    if (dmBuyer) await dm(client, order.buyer?.id, String(dmBuyer).slice(0, 1800));
+    if (dmBuyer) await dm(client, order.buyer?.id, String(dmBuyer).slice(0, 1800), order.status === 'completed' ? proofEmbeds(order) : []);
     res.json({ message: ref });
   });
 
@@ -259,4 +311,4 @@ function startStoreApi(client) {
   app.listen(port, () => console.log(`[store] API toko aktif di port ${port}`));
 }
 
-module.exports = { startStoreApi, handleOrderButton };
+module.exports = { startStoreApi, handleOrderButton, handleProofModal };

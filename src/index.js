@@ -5,7 +5,7 @@ const path = require('path');
 const { paymentPayload, staticFile, staticAttachment } = require('./qris');
 const { setup: setupGuard, isAllowed } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
-const { startStoreApi, handleOrderButton } = require('./store-api');
+const { startStoreApi, handleOrderButton, handleProofModal } = require('./store-api');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 const client = new Client({
@@ -39,6 +39,7 @@ client.on(Events.InteractionCreate, async interaction => {
   // Tombol order VOLT.STORE: selalu dijawab (hak akses dicek API toko), walau daftar server toko belum termuat —
   // kalau diabaikan, Discord menampilkan "didn't respond in time".
   if (interaction.isButton() && interaction.customId.startsWith('order:')) return handleOrderButton(interaction).catch(err => console.error('[store] tombol order:', err));
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('orderproof:')) return handleProofModal(interaction).catch(err => console.error('[store] bukti order:', err));
   // Server lain yang tidak diizinkan: abaikan
   if (interaction.guildId && !isAllowed(interaction.guildId)) return;
   const isModal = interaction.isModalSubmit();
