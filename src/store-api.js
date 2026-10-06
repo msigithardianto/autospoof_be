@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Events, MessageFlags, PermissionFlagsBits,
 } = require('discord.js');
 const orders = require('./orders');
 const { qrisPng, validate } = require('./qris');
@@ -74,7 +74,18 @@ function orderButtons(o) {
   return set ? [new ActionRowBuilder().addComponents(set)] : [];
 }
 
+const posting = new Set();
 async function postOrder(client, o) {
+  if (!client.isReady() || posting.has(o.id)) return; // dikirim ulang otomatis saat bot online
+  posting.add(o.id);
+  try {
+    await sendOrder(client, o);
+  } finally {
+    posting.delete(o.id);
+  }
+}
+
+async function sendOrder(client, o) {
   const channelId = process.env.ORDER_CHANNEL_ID;
   if (!channelId) return console.warn('[store] ORDER_CHANNEL_ID kosong — order tidak diposting ke Discord.');
   const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -216,8 +227,15 @@ function startStoreApi(client) {
     refreshMessage(client, next);
   });
 
+  // Kirim embed order yang tertunda (bot baru online / sempat gagal kirim)
+  const flush = () => {
+    for (const o of orders.unposted()) postOrder(client, o).catch(err => console.error('[store] gagal posting order:', err.message));
+  };
+  client.on(Events.ClientReady, flush);
+
   // Order lewat batas bayar -> kedaluwarsa (embed ikut diperbarui)
   setInterval(() => {
+    flush();
     for (const o of orders.overdue()) {
       const next = orders.transition(o.id, 'expired');
       if (next) refreshMessage(client, next);

@@ -64,6 +64,9 @@ function patch(id, fields) {
   return next;
 }
 
+/** Order aktif yang embed-nya belum terkirim ke Discord (mis. bot sempat offline). */
+const unposted = () => [...orders.values()].filter(o => !o.messageId && ['awaiting', 'paid', 'processing'].includes(o.status));
+
 const overdue = (now = Date.now()) => [...orders.values()].filter(o => o.status === 'awaiting' && now > o.expiresAt);
 
-module.exports = { get, create, transition, patch, overdue };
+module.exports = { get, create, transition, patch, overdue, unposted };
