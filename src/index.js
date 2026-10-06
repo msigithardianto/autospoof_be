@@ -3,7 +3,7 @@ console.log(`[bot] Memulai versi ${(process.env.RAILWAY_GIT_COMMIT_SHA || 'lokal
 const fs = require('fs');
 const path = require('path');
 const { paymentPayload, staticFile, staticAttachment } = require('./qris');
-const { setup: setupGuard, isAllowed } = require('./guard');
+const { setup: setupGuard, isAllowed, isShopGuild } = require('./guard');
 const { ask, format, checkCooldown, wantsUi } = require('./ai');
 const { startStoreApi, handleOrderButton } = require('./store-api');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags, AttachmentBuilder } = require('discord.js');
@@ -36,7 +36,9 @@ client.once(Events.ClientReady, c => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (interaction.guildId && !isAllowed(interaction.guildId)) return; // server tidak diizinkan
+  // Server toko VOLT.STORE: hanya tombol order; server lain yang tidak diizinkan: abaikan
+  const orderButton = interaction.isButton() && interaction.customId.startsWith('order:');
+  if (interaction.guildId && !isAllowed(interaction.guildId) && !(orderButton && isShopGuild(interaction.guildId))) return;
   const isModal = interaction.isModalSubmit();
   const isButton = interaction.isButton();
   if (!interaction.isChatInputCommand() && !isModal && !isButton) return;

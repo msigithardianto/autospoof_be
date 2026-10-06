@@ -1,16 +1,50 @@
-// Penjaga server: bot hanya aktif di server yang diizinkan (ALLOWED_GUILD_IDS, default GUILD_ID).
+// Penjaga server.
+// - Server "rumah" (ALLOWED_GUILD_IDS, default GUILD_ID): semua fitur bot (AI, command, auto-reply).
+// - Server toko VOLT.STORE (didaftarkan seller lewat dashboard): hanya notifikasi & tombol order.
+// - Server lain: diberi waktu GRACE_MS untuk didaftarkan seller, lalu bot keluar otomatis.
 const { Events, AuditLogEvent, Team } = require('discord.js');
 
-function allowedSet() {
+const GRACE_MS = 15 * 60_000;
+const REFRESH_MS = 5 * 60_000;
+
+function homeSet() {
   const raw = process.env.ALLOWED_GUILD_IDS || process.env.GUILD_ID || '';
   return new Set(raw.split(',').map(s => s.trim()).filter(Boolean));
 }
 
-// Jika daftar kosong, tidak ada pembatasan (supaya bot tidak keluar dari semua server karena salah konfigurasi)
-function isAllowed(guildId) {
-  const set = allowedSet();
+/* ---------- Server toko (dari API toko) ---------- */
+let shopGuilds = new Set();
+let lastRefresh = 0;
+
+async function refreshShopGuilds(force = false) {
+  if (!process.env.STORE_URL || !process.env.STORE_API_KEY) return shopGuilds;
+  if (!force && Date.now() - lastRefresh < REFRESH_MS) return shopGuilds;
+  try {
+    const res = await fetch(`${process.env.STORE_URL.replace(/\/+$/, '')}/api/bot/guilds`, {
+      headers: { 'x-api-key': process.env.STORE_API_KEY },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const { guilds } = await res.json();
+      if (Array.isArray(guilds)) shopGuilds = new Set(guilds.filter(g => /^\d{17,20}$/.test(g)));
+      lastRefresh = Date.now();
+    }
+  } catch (err) {
+    console.error('[guard] gagal memuat server toko:', err.message);
+  }
+  return shopGuilds;
+}
+
+// Jika daftar rumah kosong, tidak ada pembatasan (supaya bot tidak keluar dari semua server karena salah konfigurasi)
+function isHome(guildId) {
+  const set = homeSet();
   return set.size === 0 || set.has(guildId);
 }
+
+const isShopGuild = guildId => shopGuilds.has(guildId);
+
+/** Fitur penuh (AI, command, auto-reply) hanya di server rumah. */
+const isAllowed = isHome;
 
 async function ownerId(client) {
   const app = await client.application.fetch();
@@ -42,24 +76,45 @@ async function findInviter(client, guild) {
   }
 }
 
-async function handleGuild(client, guild) {
-  if (isAllowed(guild.id)) return false;
+async function leaveIfUnknown(client, guildId) {
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild || isHome(guild.id)) return;
+  await refreshShopGuilds(true);
+  if (isShopGuild(guild.id)) return;
   const inviter = await findInviter(client, guild);
-  const info = `🚨 Bot ditambahkan ke server TIDAK DIIZINKAN dan otomatis keluar.\n` +
+  const info = `Bot keluar dari server yang tidak terdaftar sebagai toko VOLT.STORE.\n` +
     `Server: ${guild.name} (${guild.id})\nPemilik server: ${guild.ownerId}\nAnggota: ${guild.memberCount}\n` +
     `Diundang oleh: ${inviter ?? 'tidak diketahui (audit log tidak tersedia)'}`;
   console.warn('[guard]', info.replace(/\n/g, ' | '));
   await notify(client, info);
   await guild.leave().catch(err => console.error('[guard] gagal keluar:', err.message));
+}
+
+const waiting = new Set();
+
+/** Server baru / belum terdaftar: tunggu GRACE_MS (seller memasang Channel ID di dashboard), lalu cek ulang. */
+async function handleGuild(client, guild) {
+  if (isHome(guild.id) || waiting.has(guild.id)) return false;
+  await refreshShopGuilds(true);
+  if (isShopGuild(guild.id)) return false;
+  waiting.add(guild.id);
+  console.log(`[guard] server ${guild.name} (${guild.id}) belum terdaftar — menunggu ${GRACE_MS / 60000} menit.`);
+  setTimeout(() => leaveIfUnknown(client, guild.id).finally(() => waiting.delete(guild.id)), GRACE_MS).unref();
   return true;
 }
 
 function setup(client) {
-  if (!allowedSet().size) console.warn('[guard] ALLOWED_GUILD_IDS/GUILD_ID kosong: bot TIDAK dibatasi ke server tertentu.');
+  if (!homeSet().size) console.warn('[guard] ALLOWED_GUILD_IDS/GUILD_ID kosong: bot TIDAK dibatasi ke server tertentu.');
   client.once(Events.ClientReady, async c => {
+    await refreshShopGuilds(true);
     for (const guild of c.guilds.cache.values()) await handleGuild(c, guild);
+    // Daftar server toko diperbarui berkala; server yang dilepas seller → keluar setelah masa tunggu
+    setInterval(async () => {
+      await refreshShopGuilds(true);
+      for (const guild of c.guilds.cache.values()) if (!isHome(guild.id) && !isShopGuild(guild.id)) handleGuild(c, guild);
+    }, REFRESH_MS * 6).unref();
   });
   client.on(Events.GuildCreate, guild => handleGuild(client, guild));
 }
 
-module.exports = { setup, isAllowed, handleGuild, ownerId };
+module.exports = { setup, isAllowed, isHome, isShopGuild, refreshShopGuilds, handleGuild, ownerId };

@@ -1,14 +1,15 @@
 const crypto = require('crypto');
 const express = require('express');
 const {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, OAuth2Scopes, PermissionFlagsBits, escapeMarkdown,
 } = require('discord.js');
+const { isHome, refreshShopGuilds } = require('./guard');
 const { qrisPng, validate } = require('./qris');
 
 /* Jembatan VOLT.STORE <-> bot. Data order ada di database toko (Supabase); bot hanya notifier:
    - store -> bot (HTTP, dikunci STORE_API_KEY): kirim/perbarui embed order, DM user, QRIS platform.
    - bot -> store: klik tombol status di Discord -> POST {STORE_URL}/api/bot/orders/:id/status.
-   Order toko resmi -> ORDER_CHANNEL_ID (tombol untuk admin). Order toko seller -> DM ke seller. */
+   Order toko resmi -> ORDER_CHANNEL_ID. Order toko seller -> channel toko (bila dipasang) atau DM seller. */
 
 const STATUS = {
   awaiting: { label: 'Menunggu pembayaran', color: 0xf5b301 },
@@ -24,7 +25,22 @@ const DISCORD_ID = /^\d{17,20}$/;
 const MAX_AMOUNT = 100_000_000;
 
 const rp = n => `Rp${Number(n).toLocaleString('id-ID')}`;
-const clip = (s, n) => (String(s ?? '').length > n ? `${String(s).slice(0, n - 1)}…` : String(s ?? ''));
+const cut = (s, n) => (String(s ?? '').length > n ? `${String(s).slice(0, n - 1)}…` : String(s ?? ''));
+const clip = (s, n) => escapeMarkdown(cut(s, n));
+const NO_PING = { parse: [] };
+// Izin minimal bot di server toko
+const SHOP_PERMS = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.EmbedLinks,
+  PermissionFlagsBits.ReadMessageHistory,
+];
+const PERM_LABEL = new Map([
+  [PermissionFlagsBits.ViewChannel, 'View Channel'],
+  [PermissionFlagsBits.SendMessages, 'Send Messages'],
+  [PermissionFlagsBits.EmbedLinks, 'Embed Links'],
+  [PermissionFlagsBits.ReadMessageHistory, 'Read Message History'],
+]);
 
 /* ---------- Embed & tombol ---------- */
 function orderEmbed(o) {
@@ -68,16 +84,16 @@ function orderButtons(o) {
   return set ? [new ActionRowBuilder().addComponents(set)] : [];
 }
 
-const view = o => ({ embeds: [orderEmbed(o)], components: orderButtons(o) });
+const view = o => ({ embeds: [orderEmbed(o)], components: orderButtons(o), allowedMentions: NO_PING });
 
 async function dm(client, userId, text) {
   if (!text || !DISCORD_ID.test(String(userId))) return false;
   const user = await client.users.fetch(userId).catch(() => null);
-  return Boolean(await user?.send(text).catch(() => null)); // DM tertutup -> abaikan
+  return Boolean(await user?.send({ content: text, allowedMentions: NO_PING }).catch(() => null)); // DM tertutup -> abaikan
 }
 
-/** Kirim embed baru (channel admin / DM seller), atau edit yang sudah ada. Mengembalikan referensi pesan. */
-async function upsertOrderMessage(client, o, sellerDiscordId, ref) {
+/** Kirim embed baru (channel admin / channel toko / DM seller), atau edit yang sudah ada. Mengembalikan referensi pesan. */
+async function upsertOrderMessage(client, o, sellerDiscordId, sellerChannelId, ref) {
   if (ref?.channelId && ref?.messageId) {
     const channel = await client.channels.fetch(ref.channelId).catch(() => null);
     const msg = await channel?.messages?.fetch(ref.messageId).catch(() => null);
@@ -86,16 +102,23 @@ async function upsertOrderMessage(client, o, sellerDiscordId, ref) {
       return ref;
     }
   }
-  let channel = null;
-  if (sellerDiscordId) {
-    const user = DISCORD_ID.test(sellerDiscordId) ? await client.users.fetch(sellerDiscordId).catch(() => null) : null;
-    channel = await user?.createDM().catch(() => null);
-  } else if (process.env.ORDER_CHANNEL_ID) {
-    channel = await client.channels.fetch(process.env.ORDER_CHANNEL_ID).catch(() => null);
+  const send = async (channel, content) => {
+    if (!channel?.isTextBased?.()) return null;
+    const msg = await channel.send({ content, ...view(o) }).catch(() => null);
+    return msg ? { channelId: channel.id, messageId: msg.id } : null;
+  };
+  if (!sellerDiscordId) {
+    const official = process.env.ORDER_CHANNEL_ID ? await client.channels.fetch(process.env.ORDER_CHANNEL_ID).catch(() => null) : null;
+    return send(official);
   }
-  if (!channel?.isTextBased?.()) return null;
-  const msg = await channel.send({ content: sellerDiscordId ? 'Pesanan baru di tokomu:' : undefined, ...view(o) });
-  return { channelId: channel.id, messageId: msg.id };
+  // Toko seller: channel toko dulu, cadangan DM ke pemilik toko
+  if (sellerChannelId && DISCORD_ID.test(sellerChannelId)) {
+    const shop = await client.channels.fetch(sellerChannelId).catch(() => null);
+    const ok = await send(shop, 'Pesanan baru:');
+    if (ok) return ok;
+  }
+  const user = DISCORD_ID.test(sellerDiscordId) ? await client.users.fetch(sellerDiscordId).catch(() => null) : null;
+  return send(await user?.createDM().catch(() => null), 'Pesanan baru di tokomu:');
 }
 
 /* ---------- Tombol status ---------- */
@@ -117,6 +140,8 @@ async function handleOrderButton(interaction) {
       actorId: interaction.user.id,
       actorName: interaction.user.username,
       admin: Boolean(interaction.inGuild() && interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)),
+      guildId: interaction.guildId ?? null,
+      home: Boolean(interaction.inGuild() && isHome(interaction.guildId)),
     }),
     signal: AbortSignal.timeout(10000),
   }).catch(() => null);
@@ -163,15 +188,45 @@ function startStoreApi(client) {
 
   // Kirim / perbarui embed order (+ DM pembeli bila status berubah)
   app.post('/notify/order', auth, async (req, res) => {
-    const { order, sellerDiscordId, message, dmBuyer } = req.body ?? {};
+    const { order, sellerDiscordId, sellerChannelId, message, dmBuyer } = req.body ?? {};
     if (!order || !UUID_RE.test(order.id ?? '') || !Array.isArray(order.lines)) return res.status(400).json({ error: 'invalid_order' });
     if (!client.isReady()) return res.status(503).json({ error: 'discord_not_ready' });
-    const ref = await upsertOrderMessage(client, order, sellerDiscordId || null, message).catch(err => {
+    const ref = await upsertOrderMessage(client, order, sellerDiscordId || null, sellerChannelId || null, message).catch(err => {
       console.error('[store] gagal kirim embed order:', err.message);
       return null;
     });
     if (dmBuyer) await dm(client, order.buyer?.id, String(dmBuyer).slice(0, 1800));
     res.json({ message: ref });
+  });
+
+  // Link undangan bot untuk server toko (izin minimal, tanpa slash command)
+  app.get('/discord/invite', auth, (_req, res) => {
+    if (!client.isReady()) return res.status(503).json({ error: 'discord_not_ready' });
+    res.json({ url: client.generateInvite({ scopes: [OAuth2Scopes.Bot], permissions: SHOP_PERMS }) });
+  });
+
+  // Hubungkan channel toko: verifikasi bot bisa kirim & pemilik toko punya izin Manage Server di server itu
+  app.post('/discord/link', auth, async (req, res) => {
+    const { channelId, userId, shopName } = req.body ?? {};
+    if (!DISCORD_ID.test(String(channelId)) || !DISCORD_ID.test(String(userId))) return res.status(400).json({ error: 'Channel ID tidak valid (17–20 digit angka).' });
+    if (!client.isReady()) return res.status(503).json({ error: 'Bot sedang offline. Coba lagi sebentar.' });
+
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.guild) return res.status(400).json({ error: 'Channel tidak ditemukan. Undang bot ke servermu dulu, lalu salin ID text channel.' });
+    if (!channel.isTextBased() || channel.isThread() || channel.isVoiceBased()) return res.status(400).json({ error: 'Pilih text channel biasa (bukan thread / voice).' });
+
+    const me = channel.guild.members.me ?? (await channel.guild.members.fetchMe().catch(() => null));
+    const perms = me && channel.permissionsFor(me);
+    const missing = SHOP_PERMS.filter(p => !perms?.has(p)).map(p => PERM_LABEL.get(p));
+    if (missing.length) return res.status(400).json({ error: `Bot belum punya izin di channel itu: ${missing.join(', ')}.` });
+
+    const member = await channel.guild.members.fetch(userId).catch(() => null);
+    if (!member) return res.status(403).json({ error: 'Akun Discord-mu bukan anggota server itu.' });
+    if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) return res.status(403).json({ error: 'Kamu butuh izin Manage Server di server itu.' });
+
+    await channel.send({ content: `Channel ini terhubung ke toko **${clip(shopName, 40)}** di VOLT.STORE. Pesanan baru akan muncul di sini.`, allowedMentions: NO_PING }).catch(() => {});
+    refreshShopGuilds(true);
+    res.json({ guildId: channel.guild.id, guildName: cut(channel.guild.name, 100), channelName: cut(channel.name, 100) });
   });
 
   // DM bebas (mis. konfirmasi langganan seller)
